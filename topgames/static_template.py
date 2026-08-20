@@ -177,6 +177,12 @@ tbody tr:hover{background:var(--row-hover)}
 /* ---------- footer ---------- */
 .tfoot{display:flex;justify-content:space-between;align-items:center;gap:16px;
   padding:15px 4px;font-size:12px;color:var(--faint);flex-wrap:wrap}
+.rows{display:inline-flex;gap:2px;align-items:center;margin-left:4px}
+.rows button{font:inherit;font-family:var(--mono);font-size:11.5px;padding:3px 8px;
+  border:1px solid transparent;border-radius:5px;background:none;color:var(--dim);
+  cursor:pointer}
+.rows button:hover{color:var(--ink);border-color:var(--line)}
+.rows button.on{background:var(--row-hover);color:var(--ink);border-color:var(--line)}
 .pager{display:flex;gap:5px;align-items:center}
 .pager button{font:inherit;font-family:var(--mono);font-size:12px;padding:5px 10px;
   border:1px solid transparent;border-radius:6px;background:none;color:var(--dim);
@@ -234,9 +240,9 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const num = n => (n || 0).toLocaleString('en-US');
-const PER_PAGE = 10;
+const PAGE_SIZES = [10, 50, 100];
 
-const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1,
+const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1, perPage:10,
             q:'', publisher:'all', minRating:0, released:'any' };
 
 /* The delta column can only describe the span the database actually covers. */
@@ -507,11 +513,13 @@ function renderBody(){
     foot.innerHTML = ''; return;
   }
 
-  const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+  // The timeline is a trend overview, so it always plots the whole set.
+  const paged = S.view === 'table' || S.view === 'grid';
+  const pages = paged ? Math.max(1, Math.ceil(rows.length / S.perPage)) : 1;
   S.page = Math.min(S.page, pages);
-  const show = S.view === 'table' ? rows.slice((S.page-1)*PER_PAGE, S.page*PER_PAGE) : rows;
+  const show = paged ? rows.slice((S.page-1)*S.perPage, S.page*S.perPage) : rows;
 
-  el.innerHTML = S.view === 'grid' ? gridFor(rows)
+  el.innerHTML = S.view === 'grid' ? gridFor(show)
                : S.view === 'timeline' ? timelineFor(rows)
                : tableFor(show);
 
@@ -521,9 +529,16 @@ function renderBody(){
     S.page = 1; render();
   });
 
-  const first = (S.page-1)*PER_PAGE + 1, last = Math.min(S.page*PER_PAGE, rows.length);
-  foot.innerHTML = S.view === 'table'
-    ? `<div>Showing ${first}–${last} of ${rows.length} · refreshed daily</div>
+  const sizeSwitch = `<span class="rows">Rows ${PAGE_SIZES.map(n =>
+    `<button class="${S.perPage===n?'on':''}" data-size="${n}">${n}</button>`).join('')}</span>`;
+
+  if (!paged){
+    foot.innerHTML = `<div>Showing all ${rows.length} · refreshed daily</div>`;
+  } else {
+    const first = (S.page-1)*S.perPage + 1;
+    const last = Math.min(S.page*S.perPage, rows.length);
+    foot.innerHTML =
+      `<div>Showing ${first}–${last} of ${rows.length} · refreshed daily ${sizeSwitch}</div>
        <div class="pager">
         <button ${S.page===1?'disabled':''} data-p="${S.page-1}">← prev</button>
         ${Array.from({length:pages},(_,i)=>i+1)
@@ -531,11 +546,19 @@ function renderBody(){
           .map((p,i,a) => (i && p - a[i-1] > 1 ? '<span>…</span>' : '') +
             `<button class="${p===S.page?'on':''}" data-p="${p}">${p}</button>`).join('')}
         <button ${S.page===pages?'disabled':''} data-p="${S.page+1}">next →</button>
-       </div>`
-    : `<div>Showing all ${rows.length} · refreshed daily</div>`;
+       </div>`;
+  }
   foot.querySelectorAll('[data-p]').forEach(b =>
     b.onclick = () => { S.page = Number(b.dataset.p); renderBody();
       window.scrollTo({top:0, behavior:'smooth'}); });
+  foot.querySelectorAll('[data-size]').forEach(b =>
+    b.onclick = () => {
+      // Keep the first visible row in view instead of jumping back to page 1.
+      const anchor = (S.page - 1) * S.perPage;
+      S.perPage = Number(b.dataset.size);
+      S.page = Math.floor(anchor / S.perPage) + 1;
+      renderBody();
+    });
 }
 
 function render(){ renderHero(); renderControls(); renderBody(); }
