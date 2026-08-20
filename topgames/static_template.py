@@ -360,13 +360,13 @@ function deltaCell(d, isNew){
   return '<span class="d flat">— 0</span>';
 }
 
-/* Rank over time as a line, not bars.
-   Two design points matter here. Rank 1 is the best rank, so the y axis is
-   inverted -- climbing draws upward, which is the direction people expect.
-   And the vertical scale keeps a minimum span, so a one-place wobble reads as a
-   gentle slope rather than filling the whole box the way a self-normalised
-   chart would. */
-const SPARK_MIN_SPAN = 8;
+/* Rank over time.
+   Rank 1 is the best rank, so the y axis is inverted: climbing draws upward,
+   which is the direction people expect. Each step is coloured by its own
+   direction rather than the net change, so a game that slid and recovered
+   still reads as movement instead of a flat grey line. A minimum vertical span
+   keeps a one-place wobble from filling the whole box. */
+const SPARK_MIN_SPAN = 4;
 
 function spark(history){
   if (!history || history.length < 2)
@@ -380,23 +380,40 @@ function spark(history){
   const x = i => pad + i * (W - 2 * pad) / (history.length - 1);
   const y = r => pad + ((r - top) / (bottom - top)) * (H - 2 * pad);
 
-  const move = history[0] - history[history.length - 1];   // + means climbed
-  const cls = move > 0 ? 'up' : move < 0 ? 'down' : 'flat';
-  const stroke = move > 0 ? 'var(--up)' : move < 0 ? 'var(--down)' : 'var(--flat)';
-  const pts = history.map((r, i) => `${x(i).toFixed(1)},${y(r).toFixed(1)}`).join(' ');
+  const UP = 'var(--up)', DOWN = 'var(--down)', FLAT = 'var(--flat)';
+  const segs = [];
+  for (let i = 1; i < history.length; i++){
+    const step = history[i - 1] - history[i];        // + means it climbed
+    const colour = step > 0 ? UP : step < 0 ? DOWN : FLAT;
+    segs.push(`<line x1="${x(i-1).toFixed(1)}" y1="${y(history[i-1]).toFixed(1)}"
+      x2="${x(i).toFixed(1)}" y2="${y(history[i]).toFixed(1)}" stroke="${colour}"
+      stroke-width="1.75" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`);
+  }
+  // A vertex dot at each snapshot, so direction changes are countable.
+  const dots = history.map((r, i) =>
+    `<circle cx="${x(i).toFixed(1)}" cy="${y(r).toFixed(1)}" r="1.3"
+       fill="var(--bg)" stroke="${FLAT}" stroke-width="1"
+       vector-effect="non-scaling-stroke"/>`).join('');
+
+  const net = history[0] - history[history.length - 1];
+  const cls = net > 0 ? 'up' : net < 0 ? 'down' : 'flat';
+  const endColour = net > 0 ? UP : net < 0 ? DOWN : FLAT;
   const lastX = x(history.length - 1), lastY = y(history[history.length - 1]);
-  const label = move > 0 ? `+${move}` : move < 0 ? `${move}` : '0';
-  const title = `#${history[0]} → #${history[history.length - 1]} over ` +
-                `${history.length} snapshots`;
+
+  // Total distance travelled, which a net figure of zero would hide entirely.
+  let swing = 0;
+  for (let i = 1; i < history.length; i++) swing += Math.abs(history[i] - history[i-1]);
+  const label = net > 0 ? `+${net}` : net < 0 ? `${net}` : (swing ? '±' : '0');
+  const title = `#${history[0]} → #${history[history.length - 1]} over `
+    + `${history.length} snapshots` + (swing > Math.abs(net)
+        ? ` · ${swing} places moved in total` : '');
 
   return `<div class="spark" title="${esc(title)}">
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="${esc(title)}">
       <line x1="0" y1="${(H/2).toFixed(1)}" x2="${W}" y2="${(H/2).toFixed(1)}"
         stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>
-      <polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="1.75"
-        stroke-linejoin="round" stroke-linecap="round"
-        vector-effect="non-scaling-stroke"/>
-      <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.2" fill="${stroke}"/>
+      ${segs.join('')}${dots}
+      <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.2" fill="${endColour}"/>
     </svg>
     <span class="lbl ${cls}">${label}</span>
   </div>`;
