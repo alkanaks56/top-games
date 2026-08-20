@@ -134,6 +134,8 @@ tbody tr:hover{background:var(--row-hover)}
 .tag.new{background:rgba(61,220,132,.14);color:var(--mint)}
 .tag.fresh{background:rgba(255,210,63,.14);color:var(--signal)}
 .tag.count{background:var(--row-hover);color:var(--dim);border:1px solid var(--line)}
+.tag.top100{background:rgba(61,220,132,.16);color:var(--mint);
+  border:1px solid rgba(61,220,132,.32)}
 .co{font-size:13px;white-space:nowrap}
 .rating{font-family:var(--mono);font-size:13.5px;font-weight:600;white-space:nowrap}
 .rating .star{color:var(--signal);margin-right:4px}
@@ -235,7 +237,7 @@ BODY = r"""
     <button data-tab="digest">Slack digest</button>
   </nav>
   <div class="spacer"></div>
-  <div class="sync"><span class="dot"></span> synced __SYNC__ · itunes rss
+  <div class="sync"><span class="dot"></span> synced <span id="synced">__SYNC__</span> · itunes rss
     <a class="sync-btn" id="sync" href="__ACTIONS__" target="_blank" rel="noopener"
        title="Run the refresh job now on GitHub">&#8635;</a></div>
   <button class="btn" id="csv">Export CSV</button>
@@ -295,6 +297,15 @@ function slackText(kind, rows){
               D.span_days >= 1 ? D.span_days + ' day(s)' : 'today'}`,
             '', ...up.map(line), ...down.map(line)].join('\n');
   }
+  if (kind === 'new'){
+    const charted = rows.filter(r => r.rank).length;
+    return [`*New releases — ${scope}*`,
+            `${rows.length} in the last ${D.new_days} days · ${charted} in the top 100`,
+            '',
+            ...rows.map(r => `• *${r.name}* — ${r.artist} · ${
+              r.rating ? r.rating.toFixed(2) + '★' : 'no ratings yet'} · ${r.released}${
+              r.rank ? `  \`TOP 100 #${r.rank}\`` : ''}`)].join('\n');
+  }
   return [`*Top ${rows.length} — ${scope}*`, '',
           ...rows.map(r => `#${String(r.rank).padStart(2,'0')} *${r.name}* — ${
             r.artist} · ${r.rating.toFixed(2)}★`)].join('\n');
@@ -304,6 +315,31 @@ function toast(msg){
   const t = document.createElement('div');
   t.className = 'toast'; t.textContent = msg;
   document.body.appendChild(t); setTimeout(() => t.remove(), 2600);
+}
+
+/* Posting to Slack goes through the Worker, which holds the webhook. The page
+   sends only a message kind -- never text -- so the endpoint cannot be used to
+   push arbitrary content into the channel. */
+async function shareToSlack(kind, btn){
+  if (!D.worker_url){
+    toast('Share needs the Worker deployed — see DEPLOY.md');
+    return;
+  }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const res = await fetch(D.worker_url.replace(/\/$/, '') + '/share', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({kind}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    toast(body.message || 'Sent to Slack');
+  } catch (err) {
+    toast(`Could not send: ${err.message}`);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
 }
 
 async function copyText(text, label){
@@ -572,7 +608,8 @@ function newReleasesView(){
         <a href="${esc(r.url)}" target="_blank" rel="noopener">
           <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
         <div><a class="g-name" href="${esc(r.url)}" target="_blank"
-             rel="noopener">${esc(r.name)}</a>
+             rel="noopener">${esc(r.name)}</a>${
+             r.rank ? `<span class="tag top100">top 100</span>` : ''}
           <div class="g-sub">${esc(r.genre)}</div></div></div></td>
       <td><div class="co">${companyLink(r)}</div></td>
       <td class="rating"><span class="star">★</span>${r.rating ? r.rating.toFixed(2) : '—'}</td>
@@ -611,8 +648,14 @@ function renderBody(){
     return;
   }
   if (S.tab === 'new'){
-    el.innerHTML = newReleasesView();
+    el.innerHTML = `<div class="copybar">
+        <button class="btn solid" id="shareslack">Share to Slack</button>
+        <span style="color:var(--faint);font-size:12px">Posts all
+          ${D.new_releases.length} releases, charting ones tagged.</span>
+      </div>` + newReleasesView();
     foot.innerHTML = `<div>${D.new_releases.length} releases in the last ${D.new_days} days</div>`;
+    const sb = el.querySelector('#shareslack');
+    sb.onclick = () => shareToSlack('new', sb);
     return;
   }
 
@@ -638,20 +681,19 @@ function renderBody(){
   const kind = S.tab === 'movers' ? 'movers' : 'chart';
   const copyRows = S.tab === 'movers' ? rows : show;
   const bar = `<div class="copybar">
-      <button class="btn" id="copyslack">Copy for Slack</button>
+      <button class="btn solid" id="shareslack">Share to Slack</button>
       <span style="color:var(--faint);font-size:12px">${
         S.tab === 'movers'
-          ? 'Formats every mover as “up/down N — now #rank”.'
-          : `Formats the ${copyRows.length} rows on this page with their current rank.`
+          ? 'Posts every mover as “up/down N — now #rank”.'
+          : `Posts the current top ${Math.min(copyRows.length, 25)} with live ranks.`
       }</span></div>`;
 
   el.innerHTML = bar + (S.view === 'grid' ? gridFor(show)
                : S.view === 'timeline' ? timelineFor(rows)
                : tableFor(show));
 
-  const cp = el.querySelector('#copyslack');
-  if (cp) cp.onclick = () =>
-    copyText(slackText(kind, copyRows), 'Copied — paste into Slack');
+  const cp = el.querySelector('#shareslack');
+  if (cp) cp.onclick = () => shareToSlack(kind, cp);
 
   el.querySelectorAll('[data-studio]').forEach(t => t.onclick = ev => {
     ev.preventDefault(); ev.stopPropagation(); showStudio(t.dataset.studio);
@@ -724,6 +766,23 @@ $('#csv').onclick = () => {
   a.download = `top-games-${D.captured_at.slice(0,10)}.csv`;
   a.click(); URL.revokeObjectURL(a.href);
 };
+
+/* The job runs in UTC; showing that raw reads as the wrong time for everyone
+   outside it. Render the instant in whatever zone the viewer is actually in. */
+(function localiseSync(){
+  const el = document.getElementById('synced');
+  const t = new Date(D.captured_at);
+  if (isNaN(t)) return;
+  const hhmm = t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  const mins = Math.round((Date.now() - t.getTime()) / 60000);
+  const ago = mins < 1 ? 'just now'
+            : mins < 60 ? `${mins}m ago`
+            : mins < 1440 ? `${Math.floor(mins/60)}h ago`
+            : `${Math.floor(mins/1440)}d ago`;
+  el.textContent = `${hhmm} (${ago})`;
+  el.title = `${t.toLocaleString()} · ${zone}\nUTC: ${D.captured_at}`;
+})();
 
 renderTicker();
 render();

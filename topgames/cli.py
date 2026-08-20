@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from . import config, signals, slack, staticgen, store, web
+from . import config, digest as digest_mod, signals, slack, staticgen, store, web
 from .scheduler import install_launchd, uninstall_launchd, schedule_status
 
 
@@ -54,7 +54,7 @@ def cmd_refresh(args, cfg):
 
 def cmd_digest(args, cfg):
     conn = store.connect()
-    payload, ids = slack.build_digest(conn, cfg, args.period)
+    payload, ids = digest_mod.build(conn, cfg, args.period)
     if payload is None:
         print(f"Nothing to report and skip_if_empty is on -- no {args.period} digest sent.")
         return 0

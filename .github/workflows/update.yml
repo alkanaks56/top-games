@@ -4,7 +4,7 @@ on:
   schedule:
     # 09:00 UTC daily. GitHub queues scheduled jobs on a best-effort basis, so
     # the actual start time can drift by minutes to hours under load.
-    - cron: "0 9 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       send_digest:

@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from . import command, store, viewdata
+from . import command, slack, store, viewdata
 from .static_template import BODY, SCRIPT, STYLE
 
 COUNTRY_NAMES = {"us": "United States", "gb": "United Kingdom", "de": "Germany",
@@ -59,6 +59,7 @@ def build(conn, cfg, outdir="site"):
             "weekly_time": cfg["slack"]["weekly"].get("time", "09:00"),
             "weekly": cfg["slack"]["weekly"].get("include", []),
         },
+        "worker_url": cfg["web"].get("worker_url", ""),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     })
 
@@ -94,6 +95,13 @@ def build(conn, cfg, outdir="site"):
     for name, payload in payloads.items():
         _write(os.path.join(outdir, "slack", f"{name}.json"),
                json.dumps(payload, default=str))
+
+    # Payloads the Worker forwards verbatim when someone presses Share.
+    for kind in ("movers", "new", "chart"):
+        share = slack.build_share(conn, cfg, kind)
+        if share:
+            _write(os.path.join(outdir, "slack", f"share-{kind}.json"),
+                   json.dumps(share, default=str))
 
     return {"outdir": outdir, "chart_rows": len(view["items"]),
             "new": sum(1 for i in view["items"] if i["is_new_release"]),

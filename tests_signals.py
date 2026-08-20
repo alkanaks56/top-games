@@ -1,7 +1,7 @@
 """Verify the diff engine on controlled snapshots (no network)."""
 import os, tempfile, json
 from datetime import datetime, timezone, timedelta
-from topgames import store, slack, config
+from topgames import store, slack, config, digest as digest_mod
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 conn = store.connect(db)
@@ -67,35 +67,46 @@ f = next(e for e in events if e["kind"] == "fall")
 assert f["delta"] == -4 and f["app_id"] == 1, f
 print("PASS: diff engine detects entries, exits, climbs, falls")
 
-# --- Slack digest builds from these events without a webhook
+# --- the digest builds from stored state without a webhook
 since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 cfg["signals"]["move_threshold"] = 3
-payload, ids = slack.build_digest(conn, cfg, "daily", since=since)
-assert payload["blocks"][0]["type"] == "header"
-inc = set(cfg["slack"]["daily"]["include"])
-expected = [e for e in events if e["kind"] in inc]
-assert len(ids) == len(expected), (len(ids), len(expected), inc)
-assert "debut" in inc, "a new release that charts must reach the daily digest"
+payload, ids = digest_mod.build(conn, cfg, "daily")
+assert payload is not None, "a day with a debut and an exit must still post"
+assert payload["blocks"][0]["type"] in ("header", "context")
 text = json.dumps(payload)
-assert "Brand New Game" in text, "new entrant must appear in the digest"
-assert "new to the top" in text, text[:400]
-assert "Brand New Game" in text
-print(f"PASS: digest built -- {len(payload['blocks'])} blocks, {len(ids)} events")
+assert "Brand New Game" in text, "the new chart entrant must appear in the digest"
+# Movers and releases come from current state; only entries and exits are events,
+# so only those get marked as sent.
+entry_exit = [e for e in events if e["kind"] in ("debut", "new_entry", "exit")]
+assert len(ids) == len(entry_exit), (len(ids), len(entry_exit))
+print(f"PASS: digest built -- {len(payload['blocks'])} blocks, {len(ids)} events marked")
 
-# --- mark_notified actually suppresses re-sending
+# --- formatters behave as the spec describes
+assert digest_mod.dot(4.8, 100) == "\U0001F7E2"
+assert digest_mod.dot(4.2, 100) == "\U0001F7E1"
+assert digest_mod.dot(3.0, 100) == "\U0001F534"
+assert digest_mod.dot(0, 0) == "\u26AA", "an unrated app must not look rated"
+assert digest_mod.delta_str(5) == "\u25B25" and digest_mod.delta_str(-5) == "\u25BC5"
+assert digest_mod.delta_str(0) == "\u2014"
+assert digest_mod.rating_str(4.5, 0) == "no ratings yet"
+print("PASS: rating dots and delta arrows encode the data, not decoration")
+
+# --- notified events are not resent
 store.mark_notified(conn, ids)
-again = store.events_since(conn, since, kinds=list(inc), unnotified_only=True)
+again = store.events_since(conn, since, kinds=["debut", "new_entry", "exit"],
+                           unnotified_only=True)
 assert not again, f"already-sent events leaked back in: {again}"
-# A 'fall' is deliberately excluded from the daily digest, so it must remain
-# pending for the weekly one rather than being marked as sent.
-pending = store.events_since(conn, since, unnotified_only=True)
-assert [e["kind"] for e in pending] == ["fall"], pending
-print("PASS: sent events are not resent; weekly-only signals stay pending")
+print("PASS: sent events are not resent")
 
-# --- empty week produces the reassuring 'no new games' message
+# --- a quiet day still posts, compressed rather than silent
 conn2 = store.connect(os.path.join(tempfile.mkdtemp(), "e.db"))
-p2, i2 = slack.build_digest(conn2, cfg, "weekly")
-assert "No new games entered" in json.dumps(p2)
-assert i2 == []
-print("PASS: quiet period renders a clean 'nothing new' digest")
+store.upsert_apps(conn2, [app(i, f"Calm {i}") for i in range(1, 4)])
+store.add_snapshot(conn2, "topfreeapplications", 7012, "us", [(r, r) for r in range(1, 4)])
+store.add_snapshot(conn2, "topfreeapplications", 7012, "us", [(r, r) for r in range(1, 4)])
+p2, i2 = digest_mod.build(conn2, cfg, "daily")
+assert p2 is not None, "silence is indistinguishable from a broken schedule"
+assert "chart unchanged" in json.dumps(p2), json.dumps(p2)[:200]
+assert len(p2["blocks"]) == 1, "a quiet day should compress to a single line"
+print("PASS: a quiet day posts the compressed form instead of going silent")
+
 print("\nALL TESTS PASSED")

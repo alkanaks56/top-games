@@ -72,8 +72,89 @@ function route(text) {
   return { inline: message(`:question: Unknown option \`${t}\`.\n\n${HELP_TEXT}`) };
 }
 
+const SHARE_KINDS = new Set(["movers", "new", "chart"]);
+const SHARE_COOLDOWN = 60; // seconds between shares of the same kind
+
+function cors(env, extra = {}) {
+  // Only the published dashboard may call this from a browser.
+  let origin = "*";
+  try { origin = new URL(env.PAGES_BASE).origin; } catch {}
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    ...extra,
+  };
+}
+
+/**
+ * Forward a prebuilt payload to Slack.
+ *
+ * The body carries only a kind, never text: the message itself is a file the
+ * scheduled job published, so this endpoint cannot be used to post arbitrary
+ * content into the channel. A short cooldown bounds how often a public page can
+ * trigger it.
+ */
+async function handleShare(request, env) {
+  if (!env.SLACK_WEBHOOK_URL) {
+    return Response.json({ error: "Worker has no SLACK_WEBHOOK_URL secret set" },
+      { status: 500, headers: cors(env) });
+  }
+  let kind = "";
+  try { kind = (await request.json()).kind; } catch {}
+  if (!SHARE_KINDS.has(kind)) {
+    return Response.json({ error: "unknown share kind" },
+      { status: 400, headers: cors(env) });
+  }
+
+  const cache = caches.default;
+  const marker = new Request(`https://share.local/${kind}`);
+  if (await cache.match(marker)) {
+    return Response.json(
+      { error: `Already shared ${kind} in the last ${SHARE_COOLDOWN}s` },
+      { status: 429, headers: cors(env) });
+  }
+
+  const src = `${env.PAGES_BASE.replace(/\/$/, "")}/slack/share-${kind}.json`;
+  let payload;
+  try {
+    const res = await fetch(src, { cf: { cacheTtl: 60 } });
+    if (!res.ok) throw new Error(`upstream ${res.status}`);
+    payload = await res.json();
+  } catch (err) {
+    return Response.json({ error: `Could not load the message (${err.message})` },
+      { status: 502, headers: cors(env) });
+  }
+
+  const post = await fetch(env.SLACK_WEBHOOK_URL, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!post.ok) {
+    const detail = await post.text().catch(() => "");
+    return Response.json({ error: `Slack rejected it (${post.status} ${detail})` },
+      { status: 502, headers: cors(env) });
+  }
+
+  await cache.put(marker, new Response("1", {
+    headers: { "Cache-Control": `max-age=${SHARE_COOLDOWN}` } }));
+  return Response.json({ ok: true, message: `Posted ${kind} to Slack` },
+    { headers: cors(env) });
+}
+
 export default {
   async fetch(request, env) {
+    const path = new URL(request.url).pathname;
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors(env) });
+    }
+    if (path === "/share") {
+      if (request.method !== "POST") {
+        return new Response("share endpoint", { status: 405, headers: cors(env) });
+      }
+      return handleShare(request, env);
+    }
     if (request.method !== "POST") {
       return new Response("top100 slash command endpoint", { status: 405 });
     }
