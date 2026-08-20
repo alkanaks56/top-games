@@ -9,7 +9,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS apps (
   app_id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
-  artist TEXT, url TEXT, icon TEXT,
+  artist TEXT, url TEXT, artist_url TEXT, icon TEXT,
   price REAL, formatted_price TEXT,
   genres TEXT, primary_genre TEXT, content_rating TEXT,
   release_date TEXT, version_date TEXT,
@@ -48,22 +48,43 @@ def connect(path=DB_PATH):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn):
+    """Add columns introduced after a database was first created."""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(apps)")}
+    for column, ddl in (("artist_url", "ALTER TABLE apps ADD COLUMN artist_url TEXT"),):
+        if column not in have:
+            conn.execute(ddl)
+    conn.commit()
+
+
+# Columns a record may omit; filled in so adding a field cannot break callers.
+APP_DEFAULTS = {
+    "artist": "", "url": "", "artist_url": "", "icon": "", "price": 0.0,
+    "formatted_price": "", "genres": "", "primary_genre": "", "content_rating": "",
+    "release_date": "", "version_date": "", "avg_rating": 0.0, "rating_count": 0,
+    "description": "",
+}
 
 
 def upsert_apps(conn, records):
     """Insert or update app metadata, preserving the original first_seen."""
     ts = now_iso()
     for rec in records:
+        rec = {**APP_DEFAULTS, **rec}
         conn.execute("""
-            INSERT INTO apps (app_id, name, artist, url, icon, price, formatted_price,
-                genres, primary_genre, content_rating, release_date, version_date,
-                avg_rating, rating_count, description, first_seen, last_seen)
-            VALUES (:app_id,:name,:artist,:url,:icon,:price,:formatted_price,
+            INSERT INTO apps (app_id, name, artist, url, artist_url, icon, price,
+                formatted_price, genres, primary_genre, content_rating, release_date,
+                version_date, avg_rating, rating_count, description, first_seen, last_seen)
+            VALUES (:app_id,:name,:artist,:url,:artist_url,:icon,:price,:formatted_price,
                 :genres,:primary_genre,:content_rating,:release_date,:version_date,
                 :avg_rating,:rating_count,:description,:ts,:ts)
             ON CONFLICT(app_id) DO UPDATE SET
                 name=excluded.name, artist=excluded.artist, url=excluded.url,
+                artist_url=excluded.artist_url,
                 icon=excluded.icon, price=excluded.price,
                 formatted_price=excluded.formatted_price, genres=excluded.genres,
                 primary_genre=excluded.primary_genre,

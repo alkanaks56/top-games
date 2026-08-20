@@ -94,6 +94,7 @@ def normalize(raw):
         "name": raw.get("trackName") or "(unknown)",
         "artist": raw.get("artistName") or "",
         "url": raw.get("trackViewUrl") or "",
+        "artist_url": raw.get("artistViewUrl") or "",
         "icon": raw.get("artworkUrl100") or "",
         "price": float(raw.get("price") or 0.0),
         "formatted_price": raw.get("formattedPrice") or "",

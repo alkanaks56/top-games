@@ -150,6 +150,28 @@ tbody tr:hover{background:var(--row-hover)}
 .spark.none{color:var(--faint);font-family:var(--mono);font-size:11px;align-items:center}
 .price{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);
   padding:3px 9px;border-radius:5px;white-space:nowrap}
+a.g-name:hover,a.co-link:hover{color:var(--mint)}
+.co-link{cursor:pointer}
+/* Publisher table: pin the figure columns so they cluster right instead of
+   drifting apart across a wide screen. */
+.pub th:nth-child(1),.pub td:nth-child(1){width:56px}
+.pub th:nth-child(3),.pub td:nth-child(3){width:80px}
+.pub th:nth-child(4),.pub td:nth-child(4){width:104px}
+.pub th:nth-child(5),.pub td:nth-child(5){width:112px}
+.pub th:nth-child(6),.pub td:nth-child(6){width:132px}
+.pub th:nth-child(7),.pub td:nth-child(7){width:116px}
+.pub tbody tr{cursor:pointer}
+.sync-btn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;
+  width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:13px;padding:0;margin-left:8px;line-height:1}
+.sync-btn:hover{color:var(--ink);border-color:var(--faint)}
+.copybar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:60;
+  background:var(--ink);color:var(--bg);padding:11px 18px;border-radius:8px;
+  font-size:13px;font-weight:600;box-shadow:0 8px 26px rgba(0,0,0,.45)}
+.pre{font-family:var(--mono);font-size:12px;color:var(--dim);background:var(--bg);
+  border:1px solid var(--line);border-radius:8px;padding:13px 15px;white-space:pre-wrap;
+  margin-top:12px;max-height:260px;overflow:auto}
 
 /* ---------- grid view ---------- */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px}
@@ -213,7 +235,9 @@ BODY = r"""
     <button data-tab="digest">Slack digest</button>
   </nav>
   <div class="spacer"></div>
-  <div class="sync"><span class="dot"></span> synced __SYNC__ · itunes rss</div>
+  <div class="sync"><span class="dot"></span> synced __SYNC__ · itunes rss
+    <a class="sync-btn" id="sync" href="__ACTIONS__" target="_blank" rel="noopener"
+       title="Run the refresh job now on GitHub">&#8635;</a></div>
   <button class="btn" id="csv">Export CSV</button>
   <a class="btn solid" href="__ACTIONS__" target="_blank" rel="noopener">Send digest</a>
 </header>
@@ -249,6 +273,47 @@ const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1, perPage:10,
 const spanLabel = D.span_days >= 7 ? 'Δ 7D'
                 : D.span_days >= 1 ? `Δ ${D.span_days}D`
                 : 'Δ TODAY';
+
+function companyLink(r){
+  return r.artist_url
+    ? `<a class="co-link" href="${esc(r.artist_url)}" target="_blank"
+         rel="noopener">${esc(r.artist)}</a>`
+    : esc(r.artist);
+}
+
+/* Slack has no way in from a static page, so the page composes the message and
+   hands it to the clipboard. Embedding the webhook here would let any visitor
+   post into the channel. */
+function slackText(kind, rows){
+  const scope = `${D.genre} · ${D.country}`;
+  if (kind === 'movers'){
+    const up = rows.filter(r => r.delta > 0), down = rows.filter(r => r.delta < 0);
+    const line = r => `${r.delta > 0 ? '▲' : '▼'} *${r.name}* ${
+      r.delta > 0 ? 'up' : 'down'} ${Math.abs(r.delta)} — now #${r.rank}`;
+    return [`*Movers — ${scope}*`,
+            `${up.length} up · ${down.length} down over ${
+              D.span_days >= 1 ? D.span_days + ' day(s)' : 'today'}`,
+            '', ...up.map(line), ...down.map(line)].join('\n');
+  }
+  return [`*Top ${rows.length} — ${scope}*`, '',
+          ...rows.map(r => `#${String(r.rank).padStart(2,'0')} *${r.name}* — ${
+            r.artist} · ${r.rating.toFixed(2)}★`)].join('\n');
+}
+
+function toast(msg){
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t); setTimeout(() => t.remove(), 2600);
+}
+
+async function copyText(text, label){
+  try { await navigator.clipboard.writeText(text); toast(label); }
+  catch { 
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove(); toast(label);
+  }
+}
 
 function deltaCell(d, isNew){
   if (isNew) return '<span class="d up">NEW</span>';
@@ -400,25 +465,28 @@ function tableFor(rows){
     <thead><tr>
       ${TH('rank','#')}${TH('delta',spanLabel)}${TH('name','Game')}
       ${TH('artist','Company')}${TH('rating','Rating')}${TH('ratings','Ratings')}
-      ${TH('released','Released')}<th>Rank trend</th>${TH('price','Price')}
+      ${TH('released','Released')}<th>Rank trend</th>
     </tr></thead><tbody>
     ${rows.map(r => `<tr>
       <td class="c-rank">${String(r.rank).padStart(2,'0')}</td>
       <td class="c-d">${deltaCell(r.delta, r.is_new_entry)}</td>
       <td><div class="game">
-        <img class="ico" loading="lazy" src="${esc(r.icon)}" alt="">
-        <div><div class="g-name">${esc(r.name)}${
-            r.is_new_release ? '<span class="tag fresh">fresh</span>' : ''}</div>
+        <a href="${esc(r.url)}" target="_blank" rel="noopener">
+          <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
+        <div><a class="g-name" href="${esc(r.url)}" target="_blank"
+             rel="noopener">${esc(r.name)}</a>${
+            r.is_new_release ? '<span class="tag fresh">fresh</span>' : ''}
           <div class="g-sub">${esc(r.genre)}</div></div></div></td>
-      <td><div class="co">${esc(r.artist)}${
-          r.titles_charting > 1 ? `<span class="tag count">×${r.titles_charting}</span>` : ''
+      <td><div class="co">${companyLink(r)}${
+          r.titles_charting > 1
+            ? `<span class="tag count" data-studio="${esc(r.artist)}"
+                 title="Show this studio's games">×${r.titles_charting}</span>` : ''
         }</div></td>
       <td><div class="rating"><span class="star">★</span>${r.rating.toFixed(2)}</div>
         <div class="bar"><i style="width:${(r.rating/5*100).toFixed(1)}%"></i></div></td>
       <td class="num">${num(r.ratings)}</td>
       <td class="num dim">${esc(r.released)}</td>
       <td>${spark(r.history)}</td>
-      <td><span class="price">${esc(r.price)}</span></td>
     </tr>`).join('')}
     </tbody></table></div></div>`;
 }
@@ -463,17 +531,55 @@ function timelineFor(rows){
 
 function publishersView(){
   const rows = D.publishers;
-  return `<div class="panel"><div class="scroll"><table>
+  return `<div class="note">Select a company to see its games in the top
+    ${D.stats.tracked}. The name links to its App Store developer page.</div>
+    <div class="panel"><div class="scroll"><table class="pub">
     <thead><tr><th>#</th><th>Company</th><th>Titles</th><th>Best rank</th>
       <th>Avg rating</th><th>Total ratings</th><th>Net change</th></tr></thead><tbody>
-    ${rows.map((p,i) => `<tr>
+    ${rows.map((p,i) => `<tr data-studio="${esc(p.artist)}">
       <td class="c-rank">${String(i+1).padStart(2,'0')}</td>
-      <td><div class="g-name">${esc(p.artist)}</div></td>
+      <td>${p.artist_url
+            ? `<a class="g-name co-link" href="${esc(p.artist_url)}" target="_blank"
+                 rel="noopener">${esc(p.artist)}</a>`
+            : `<span class="g-name">${esc(p.artist)}</span>`}</td>
       <td class="num">${p.titles}</td>
       <td class="num">#${p.best_rank}</td>
       <td class="num">${p.avg_rating.toFixed(2)}</td>
       <td class="num">${num(p.ratings_total)}</td>
       <td>${deltaCell(p.net_delta, false)}</td>
+    </tr>`).join('')}</tbody></table></div></div>`;
+}
+
+function newReleasesView(){
+  let rows = D.new_releases;
+  if (S.q){
+    const q = S.q.toLowerCase();
+    rows = rows.filter(r => (r.name + ' ' + r.artist).toLowerCase().includes(q));
+  }
+  if (!rows.length)
+    return `<div class="panel"><div class="empty">
+      No ${esc(D.genre.toLowerCase())} games released in the last ${D.new_days} days.</div></div>`;
+  return `<div class="note">Every tracked ${esc(D.genre.toLowerCase())} release from the
+    last ${D.new_days} days — <b>${rows.length}</b> games, of which
+    <b>${rows.filter(r => r.rank).length}</b> have reached the top
+    ${D.stats.tracked}.</div>
+    <div class="panel"><div class="scroll"><table>
+    <thead><tr><th>Age</th><th>Game</th><th>Company</th><th>Rating</th>
+      <th>Ratings</th><th>Released</th><th>Chart</th></tr></thead><tbody>
+    ${rows.map(r => `<tr>
+      <td class="c-rank">${r.days_old ?? '—'}d</td>
+      <td><div class="game">
+        <a href="${esc(r.url)}" target="_blank" rel="noopener">
+          <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
+        <div><a class="g-name" href="${esc(r.url)}" target="_blank"
+             rel="noopener">${esc(r.name)}</a>
+          <div class="g-sub">${esc(r.genre)}</div></div></div></td>
+      <td><div class="co">${companyLink(r)}</div></td>
+      <td class="rating"><span class="star">★</span>${r.rating ? r.rating.toFixed(2) : '—'}</td>
+      <td class="num">${num(r.ratings)}</td>
+      <td class="num dim">${esc(r.released)}</td>
+      <td>${r.rank ? `<span class="d up">#${r.rank}</span>`
+                   : '<span class="d flat">—</span>'}</td>
     </tr>`).join('')}</tbody></table></div></div>`;
 }
 
@@ -495,12 +601,22 @@ function digestView(){
 function renderBody(){
   const el = $('#view'), foot = $('#tfoot');
   if (S.tab === 'digest'){ el.innerHTML = digestView(); foot.innerHTML=''; return; }
-  if (S.tab === 'publishers'){ el.innerHTML = publishersView();
+  if (S.tab === 'publishers'){
+    el.innerHTML = publishersView();
     foot.innerHTML = `<div>${D.publishers.length} companies in the top ${D.stats.tracked}</div>`;
-    return; }
+    el.querySelectorAll('tr[data-studio]').forEach(tr => tr.onclick = ev => {
+      if (ev.target.closest('a')) return;   // let the developer-page link through
+      showStudio(tr.dataset.studio);
+    });
+    return;
+  }
+  if (S.tab === 'new'){
+    el.innerHTML = newReleasesView();
+    foot.innerHTML = `<div>${D.new_releases.length} releases in the last ${D.new_days} days</div>`;
+    return;
+  }
 
   let rows = filtered();
-  if (S.tab === 'new') rows = rows.filter(r => r.is_new_release);
   if (S.tab === 'movers') rows = rows.filter(r => r.delta);
 
   if (!rows.length){
@@ -519,9 +635,27 @@ function renderBody(){
   S.page = Math.min(S.page, pages);
   const show = paged ? rows.slice((S.page-1)*S.perPage, S.page*S.perPage) : rows;
 
-  el.innerHTML = S.view === 'grid' ? gridFor(show)
+  const kind = S.tab === 'movers' ? 'movers' : 'chart';
+  const copyRows = S.tab === 'movers' ? rows : show;
+  const bar = `<div class="copybar">
+      <button class="btn" id="copyslack">Copy for Slack</button>
+      <span style="color:var(--faint);font-size:12px">${
+        S.tab === 'movers'
+          ? 'Formats every mover as “up/down N — now #rank”.'
+          : `Formats the ${copyRows.length} rows on this page with their current rank.`
+      }</span></div>`;
+
+  el.innerHTML = bar + (S.view === 'grid' ? gridFor(show)
                : S.view === 'timeline' ? timelineFor(rows)
-               : tableFor(show);
+               : tableFor(show));
+
+  const cp = el.querySelector('#copyslack');
+  if (cp) cp.onclick = () =>
+    copyText(slackText(kind, copyRows), 'Copied — paste into Slack');
+
+  el.querySelectorAll('[data-studio]').forEach(t => t.onclick = ev => {
+    ev.preventDefault(); ev.stopPropagation(); showStudio(t.dataset.studio);
+  });
 
   el.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
     const k = th.dataset.sort;
@@ -559,6 +693,16 @@ function renderBody(){
       S.page = Math.floor(anchor / S.perPage) + 1;
       renderBody();
     });
+}
+
+/** Show one studio's games in the main chart view. */
+function showStudio(name){
+  S.tab = 'top'; S.publisher = name; S.page = 1; S.view = 'table'; S.q = '';
+  document.querySelectorAll('#tabs button').forEach(b =>
+    b.classList.toggle('on', b.dataset.tab === 'top'));
+  render();
+  toast(`Showing ${name}`);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function render(){ renderHero(); renderControls(); renderBody(); }

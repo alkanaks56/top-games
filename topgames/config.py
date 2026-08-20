@@ -28,16 +28,27 @@ DEFAULTS = {
         "username": "Top Games Bot",
         "icon_emoji": ":jigsaw:",
         # Which signals get posted, and in which digest.
+        # Text prepended to every digest, e.g. "<!here>" or "<!subteam^ID>".
+        "mention": "",
         "daily": {
             "enabled": True,
             "time": "09:00",
             "include": ["debut", "new_entry", "new_release", "climb", "exit"],
+            # Skip posting entirely on a day with nothing to report, instead of
+            # sending "no new games" into the channel every morning.
+            "skip_if_empty": False,
+            # Append the current top N. 0 turns the section off.
+            "show_top_n": 0,
+            "title": "",          # blank uses "Daily <Genre> Games Report"
         },
         "weekly": {
             "enabled": True,
             "day": "monday",
             "time": "09:00",
             "include": ["debut", "new_entry", "new_release", "climb", "fall", "exit"],
+            "skip_if_empty": False,
+            "show_top_n": 10,
+            "title": "",
             "show_full_chart": True,
         },
         # Post the moment a new game enters the chart, without waiting for a digest.

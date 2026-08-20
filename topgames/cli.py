@@ -55,6 +55,9 @@ def cmd_refresh(args, cfg):
 def cmd_digest(args, cfg):
     conn = store.connect()
     payload, ids = slack.build_digest(conn, cfg, args.period)
+    if payload is None:
+        print(f"Nothing to report and skip_if_empty is on -- no {args.period} digest sent.")
+        return 0
     if args.dry_run:
         print(json.dumps(payload, indent=2))
         print(f"\n(dry run -- {len(ids)} signals would be marked as notified)",
