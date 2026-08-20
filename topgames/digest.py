@@ -155,6 +155,7 @@ def build(conn, cfg, period="daily"):
     country = cfg["country"].upper()
     scope = f"{genre} · {country}"
     dash = cfg["web"].get("pages_url") or cfg["web"].get("repo_url") or ""
+    tz = cfg["slack"].get("timezone", "UTC")
 
     movers = view["movers"]
     up = sorted([m for m in movers if m["delta"] > 0], key=lambda m: -m["delta"])
@@ -212,7 +213,7 @@ def build(conn, cfg, period="daily"):
                 blocks.append(_context(f"_…and {rest} more_"))
         fallback = (f"{scope} daily — {len(up)} up, {len(down)} down, "
                     f"{len(entered)} new")
-        next_run = "tomorrow " + cfg["slack"]["daily"].get("time", "06:00")
+        next_run = f'tomorrow {cfg["slack"]["daily"].get("time","09:00")} {tz}'
     else:
         start = (datetime.now() - timedelta(days=6)).strftime("%b %d")
         blocks = [
@@ -253,7 +254,7 @@ def build(conn, cfg, period="daily"):
                     for p in pubs))]
         fallback = (f"{scope} weekly — {len(new_rel)} new releases, "
                     f"{len(entered)} chart entries")
-        next_run = "Monday " + cfg["slack"]["weekly"].get("time", "06:00")
+        next_run = f'Monday {cfg["slack"]["weekly"].get("time","09:00")} {tz}'
 
     act = _actions(cfg, len(new_rel), period == "weekly")
     if act:

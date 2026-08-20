@@ -28,6 +28,10 @@ DEFAULTS = {
         "username": "Top Games Bot",
         "icon_emoji": ":jigsaw:",
         # Which signals get posted, and in which digest.
+        # The zone the digest times below are written in. The GitHub workflow
+        # cron is UTC, so it is set to the matching UTC hour; Europe/Istanbul has
+        # no DST, which is why a fixed cron stays correct year-round.
+        "timezone": "Europe/Istanbul",
         # Text prepended to every digest, e.g. "<!here>" or "<!subteam^ID>".
         "mention": "",
         "daily": {

@@ -2,9 +2,11 @@ name: Update charts and publish
 
 on:
   schedule:
-    # 09:00 UTC daily. GitHub queues scheduled jobs on a best-effort basis, so
-    # the actual start time can drift by minutes to hours under load.
-    - cron: "0 9 * * *"
+    # 06:00 UTC == 09:00 Europe/Istanbul, the zone in config.slack.timezone.
+    # Türkiye has no DST, so this stays correct year-round. GitHub queues
+    # scheduled jobs on a best-effort basis, so the actual start can drift by
+    # minutes to hours under load.
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       send_digest:
