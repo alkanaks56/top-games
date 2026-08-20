@@ -1,0 +1,115 @@
+"""Turn consecutive chart snapshots into the events worth telling Slack about."""
+from datetime import datetime, timedelta, timezone
+
+from . import sources, store
+
+KIND_LABELS = {
+    "new_entry": "New in the chart",
+    "debut": "New release that charted",
+    "exit": "Dropped out",
+    "climb": "Climbing",
+    "fall": "Falling",
+    "new_release": "New release",
+}
+
+
+def _days_since(iso):
+    dt = sources._parse_dt(iso)
+    if not dt:
+        return None
+    return (datetime.now(timezone.utc) - dt).days
+
+
+def refresh(conn, cfg, verbose=True):
+    """Pull the chart plus new releases, store them, and derive events.
+
+    Returns a summary dict. The first run establishes a baseline: there is no
+    previous snapshot to diff against, so no chart-movement events are emitted.
+    """
+    country, chart = cfg["country"], cfg["chart"]
+    genre_id, size = cfg["genre_id"], cfg["chart_size"]
+    sig = cfg["signals"]
+    log = (lambda m: print(m)) if verbose else (lambda m: None)
+
+    log(f"Fetching {chart} top {size} ({cfg['genre']}, {country.upper()})...")
+    entries = sources.fetch_chart(country, chart, genre_id, size)
+    chart_ids = [app_id for _, app_id in entries]
+
+    # Which of these has this database never seen before? Must be asked before upsert.
+    unseen = {app_id for app_id in chart_ids if store.is_first_time(conn, app_id)}
+
+    log(f"Enriching {len(chart_ids)} apps...")
+    meta = sources.lookup(chart_ids, country)
+    store.upsert_apps(conn, list(meta.values()))
+
+    prev_snaps = store.recent_snapshots(conn, chart, limit=1)
+    prev_ranks = store.snapshot_ranks(conn, prev_snaps[0]["id"]) if prev_snaps else {}
+    is_baseline = not prev_ranks
+
+    snap_id = store.add_snapshot(conn, chart, genre_id, country, entries)
+    curr_ranks = {app_id: rank for rank, app_id in entries}
+
+    events = []
+    if not is_baseline:
+        for app_id, rank in curr_ranks.items():
+            prev = prev_ranks.get(app_id)
+            if prev is None:
+                rec = meta.get(app_id, {})
+                age = _days_since(rec.get("release_date", ""))
+                fresh = age is not None and age <= sig["new_release_days"]
+                events.append({
+                    "kind": "debut" if fresh else "new_entry",
+                    "chart": chart, "app_id": app_id, "rank": rank,
+                    "prev_rank": None, "delta": None,
+                    "detail": f"entered at #{rank}" + (f", released {age}d ago" if fresh else ""),
+                })
+            else:
+                delta = prev - rank  # positive means it moved up
+                if abs(delta) >= sig["move_threshold"]:
+                    events.append({
+                        "kind": "climb" if delta > 0 else "fall",
+                        "chart": chart, "app_id": app_id, "rank": rank,
+                        "prev_rank": prev, "delta": delta,
+                        "detail": f"#{prev} -> #{rank} ({delta:+d})",
+                    })
+        for app_id, prev in prev_ranks.items():
+            if app_id not in curr_ranks:
+                events.append({
+                    "kind": "exit", "chart": chart, "app_id": app_id,
+                    "rank": None, "prev_rank": prev, "delta": None,
+                    "detail": f"left the chart from #{prev}",
+                })
+
+    # New releases across the whole genre, not just the ones that charted.
+    log(f"Sweeping {len(cfg['search_terms'])} search terms for new releases...")
+    genre_name = cfg["genre"].replace("_", " ").title()
+    fresh, all_found, errors = sources.sweep_new_releases(
+        cfg["search_terms"], country, genre_id,
+        within_days=sig["new_release_days"], genre_name=genre_name)
+    for err in errors:
+        log(f"  warning: search term failed -- {err}")
+
+    novel = [r for r in fresh if store.is_first_time(conn, r["app_id"])]
+    store.upsert_apps(conn, list(all_found.values()))
+    for rec in novel:
+        events.append({
+            "kind": "new_release", "chart": "", "app_id": rec["app_id"],
+            "rank": None, "prev_rank": None, "delta": None,
+            "detail": f"released {rec['days_old']}d ago ({rec['release_date'][:10]})",
+        })
+
+    store.add_events(conn, events)
+    summary = {
+        "snapshot_id": snap_id, "chart_size": len(entries),
+        "baseline": is_baseline, "events": len(events),
+        "new_entries": sum(1 for e in events if e["kind"] in ("new_entry", "debut")),
+        "exits": sum(1 for e in events if e["kind"] == "exit"),
+        "movers": sum(1 for e in events if e["kind"] in ("climb", "fall")),
+        "new_releases": len(novel),
+        "genre_pool": len(all_found),
+        "first_seen_in_chart": len(unseen),
+        "errors": errors,
+    }
+    if is_baseline:
+        log("Baseline snapshot stored -- run refresh again to start seeing movement.")
+    return summary

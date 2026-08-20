@@ -1,0 +1,148 @@
+"""Apple App Store data sources.
+
+Three endpoints do the work, all keyless:
+
+* the legacy iTunes RSS chart feed, which is the only Apple source that still
+  filters a top-100 chart down to a single game subgenre (e.g. Puzzle);
+* the iTunes Search API, swept across several terms to discover new releases,
+  because the RSS "newapplications" feed ignores its genre parameter;
+* the iTunes Lookup API, which enriches ids with ratings and release dates.
+"""
+import json
+import time
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, timezone
+
+RSS = "https://itunes.apple.com/{country}/rss/{chart}/limit={limit}/genre={genre}/json"
+SEARCH = "https://itunes.apple.com/search"
+LOOKUP = "https://itunes.apple.com/lookup"
+UA = "top-games/1.0 (+local chart tracker)"
+LOOKUP_BATCH = 100  # Verified: the lookup endpoint returns all 100 ids in one call.
+
+
+class SourceError(RuntimeError):
+    pass
+
+
+def _get_json(url, timeout=30, retries=3):
+    last = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:  # network flakiness and Apple rate limiting
+            last = exc
+            if attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+    raise SourceError(f"request failed after {retries} tries: {url} ({last})")
+
+
+def _parse_dt(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def fetch_chart(country="us", chart="topfreeapplications", genre_id=7012, limit=100):
+    """Return [(rank, app_id)] for a store chart, rank starting at 1."""
+    url = RSS.format(country=country, chart=chart, limit=limit, genre=genre_id)
+    data = _get_json(url)
+    entries = data.get("feed", {}).get("entry", []) or []
+    if isinstance(entries, dict):  # Apple collapses a single-entry feed to an object
+        entries = [entries]
+    out = []
+    for rank, entry in enumerate(entries, start=1):
+        try:
+            out.append((rank, int(entry["id"]["attributes"]["im:id"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not out:
+        raise SourceError(f"chart feed returned no usable entries: {url}")
+    return out
+
+
+def lookup(app_ids, country="us"):
+    """Enrich ids with full metadata. Returns {app_id: record}."""
+    found = {}
+    ids = [str(i) for i in app_ids]
+    for start in range(0, len(ids), LOOKUP_BATCH):
+        batch = ids[start:start + LOOKUP_BATCH]
+        url = LOOKUP + "?" + urllib.parse.urlencode(
+            {"id": ",".join(batch), "country": country})
+        data = _get_json(url)
+        for raw in data.get("results", []):
+            record = normalize(raw)
+            if record:
+                found[record["app_id"]] = record
+        if start + LOOKUP_BATCH < len(ids):
+            time.sleep(0.4)  # stay well under Apple's ~20 req/min soft limit
+    return found
+
+
+def normalize(raw):
+    """Flatten an iTunes record into the shape we store."""
+    app_id = raw.get("trackId")
+    if not app_id:
+        return None
+    return {
+        "app_id": int(app_id),
+        "name": raw.get("trackName") or "(unknown)",
+        "artist": raw.get("artistName") or "",
+        "url": raw.get("trackViewUrl") or "",
+        "icon": raw.get("artworkUrl100") or "",
+        "price": float(raw.get("price") or 0.0),
+        "formatted_price": raw.get("formattedPrice") or "",
+        "genres": ",".join(raw.get("genres") or []),
+        "primary_genre": raw.get("primaryGenreName") or "",
+        "content_rating": raw.get("contentAdvisoryRating") or "",
+        "release_date": raw.get("releaseDate") or "",
+        "version_date": raw.get("currentVersionReleaseDate") or "",
+        "avg_rating": float(raw.get("averageUserRating") or 0.0),
+        "rating_count": int(raw.get("userRatingCount") or 0),
+        "description": (raw.get("description") or "")[:800],
+    }
+
+
+def sweep_new_releases(terms, country="us", genre_id=7012, within_days=30,
+                       genre_name="Puzzle", limit=200):
+    """Discover recently released games in a genre.
+
+    The RSS new-releases feed ignores its genre parameter, so instead we sweep
+    the Search API across several terms, keep only records Apple actually tags
+    with the target genre, and filter by release date. Search is relevance
+    ranked, so a brand-new game with no ratings yet may not surface until it
+    gains some traction -- the local database's first_seen column is what
+    catches those on a later run.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=within_days)
+    seen = {}
+    errors = []
+    for term in terms:
+        params = {"term": term, "country": country, "media": "software",
+                  "entity": "software", "genreId": genre_id, "limit": limit}
+        try:
+            data = _get_json(SEARCH + "?" + urllib.parse.urlencode(params))
+        except SourceError as exc:
+            errors.append(f"{term}: {exc}")
+            continue
+        for raw in data.get("results", []):
+            if genre_name and genre_name not in (raw.get("genres") or []):
+                continue
+            record = normalize(raw)
+            if record:
+                seen[record["app_id"]] = record
+        time.sleep(0.4)
+
+    fresh = []
+    for record in seen.values():
+        released = _parse_dt(record["release_date"])
+        if released and released >= cutoff:
+            record["days_old"] = (datetime.now(timezone.utc) - released).days
+            fresh.append(record)
+    fresh.sort(key=lambda r: r["days_old"])
+    return fresh, seen, errors

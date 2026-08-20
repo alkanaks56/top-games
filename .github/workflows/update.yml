@@ -1,0 +1,81 @@
+name: Update charts and publish
+
+on:
+  schedule:
+    # 09:00 UTC daily. GitHub queues scheduled jobs on a best-effort basis, so
+    # the actual start time can drift by minutes to hours under load.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      send_digest:
+        description: "Post a Slack digest for this run"
+        type: choice
+        options: ["daily", "weekly", "none"]
+        default: "daily"
+
+# Never let two runs write the database at once.
+concurrency:
+  group: topgames-update
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # commit the refreshed database back to the repo
+  pages: write      # publish the dashboard
+  id-token: write   # required by deploy-pages
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      TOPGAMES_SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh chart and new releases
+        run: python -m topgames refresh
+
+      - name: Decide which digest to send
+        id: which
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "period=${{ inputs.send_digest }}" >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%u)" = "1" ]; then
+            echo "period=weekly" >> "$GITHUB_OUTPUT"   # Monday
+          else
+            echo "period=daily" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post Slack digest
+        if: steps.which.outputs.period != 'none'
+        run: python -m topgames digest ${{ steps.which.outputs.period }}
+
+      - name: Build static site and Slack payloads
+        run: python -m topgames export --outdir site --prune
+
+      - name: Commit refreshed database
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/topgames.db
+          # The database is the only state that survives between runs; without it
+          # every run would look like a first run and detect no movement at all.
+          if git diff --staged --quiet; then
+            echo "No database changes to commit."
+          else
+            git commit -m "chore: refresh chart data [skip ci]"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,9 @@
+name = "topgames-slash"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Your GitHub Pages URL, e.g. https://<user>.github.io/<repo>
+PAGES_BASE = "https://REPLACE-ME.github.io/top-games"
+
+# SLACK_SIGNING_SECRET is set with:  wrangler secret put SLACK_SIGNING_SECRET

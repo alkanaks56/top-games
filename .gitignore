@@ -1,0 +1,7 @@
+config.json
+data/*
+!data/topgames.db
+site/
+__pycache__/
+*.pyc
+*.log
