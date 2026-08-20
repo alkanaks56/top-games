@@ -55,15 +55,32 @@ def build(conn, cfg):
     base, span_days = comparison_snapshot(conn, chart, target_days=7)
     base_ranks = store.snapshot_ranks(conn, base["id"]) if base else {}
 
-    # Rank history per app, oldest first, for the trend sparkline.
-    hist_rows = conn.execute("""
-        SELECT r.app_id, r.rank, s.captured_at
-        FROM ranks r JOIN snapshots s ON s.id = r.snapshot_id
-        WHERE s.chart = ? ORDER BY s.id
-    """, (chart,)).fetchall()
+    # Rank history for the sparkline, covering exactly the period the delta
+    # describes. Taking merely the newest N snapshots let the comparison point
+    # fall outside the window, so a game could report a rank change while its
+    # line sat perfectly flat.
+    all_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM snapshots WHERE chart=? ORDER BY id", (chart,))]
+    start = all_ids.index(base["id"]) if base and base["id"] in all_ids else 0
+    window = all_ids[start:]
+    if len(window) > HISTORY_POINTS:
+        # Thin the run evenly, always keeping the first and last points so the
+        # ends still line up with the reported delta.
+        step = (len(window) - 1) / (HISTORY_POINTS - 1)
+        window = [window[round(i * step)] for i in range(HISTORY_POINTS)]
+    order = {sid: i for i, sid in enumerate(window)}
+
     history = {}
-    for r in hist_rows:
-        history.setdefault(r["app_id"], []).append(r["rank"])
+    if window:
+        rows_h = conn.execute(
+            "SELECT snapshot_id, app_id, rank FROM ranks WHERE snapshot_id IN (%s)"
+            % ",".join("?" * len(window)), window).fetchall()
+        buckets = {}
+        for r in rows_h:
+            buckets.setdefault(r["app_id"], []).append(
+                (order[r["snapshot_id"]], r["rank"]))
+        history = {aid: [rank for _, rank in sorted(pairs)]
+                   for aid, pairs in buckets.items()}
 
     publisher_counts = {}
     for r in rows:
@@ -91,7 +108,7 @@ def build(conn, cfg):
             "price": r["formatted_price"] or "Free",
             "delta": delta,
             "prev_rank": prev,
-            "history": history.get(r["app_id"], [])[-HISTORY_POINTS:],
+            "history": history.get(r["app_id"], []),
             "artist_url": r.get("artist_url") or "",
             "titles_charting": publisher_counts.get(r["artist"], 1),
             "is_new_release": age_days is not None and age_days <= new_days,

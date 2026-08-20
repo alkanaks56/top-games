@@ -368,9 +368,19 @@ function deltaCell(d, isNew){
    keeps a one-place wobble from filling the whole box. */
 const SPARK_MIN_SPAN = 4;
 
-function spark(history){
-  if (!history || history.length < 2)
+function spark(raw){
+  if (!raw || raw.length < 2)
     return '<div class="spark none">no history yet</div>';
+
+  /* Collapse runs of an unchanged rank. Snapshots are taken far more often than
+     the chart actually moves, so plotting them one-per-x-step buries a real
+     jump inside a long flat run. One x-step per distinct position gives every
+     move equal width; the tooltip keeps the true snapshot count. */
+  const history = raw.filter((r, i) => i === 0 || r !== raw[i - 1]);
+  if (history.length < 2)
+    return `<div class="spark none" title="held #${raw[0]} across `
+         + `${raw.length} snapshots">held #${raw[0]}</div>`;
+
   const W = 60, H = 24, pad = 3;
   const lo = Math.min(...history), hi = Math.max(...history);
   const mid = (lo + hi) / 2;
@@ -404,9 +414,10 @@ function spark(history){
   let swing = 0;
   for (let i = 1; i < history.length; i++) swing += Math.abs(history[i] - history[i-1]);
   const label = net > 0 ? `+${net}` : net < 0 ? `${net}` : (swing ? '±' : '0');
-  const title = `#${history[0]} → #${history[history.length - 1]} over `
-    + `${history.length} snapshots` + (swing > Math.abs(net)
-        ? ` · ${swing} places moved in total` : '');
+  const moves = history.length - 1;
+  const title = `#${history[0]} → #${history[history.length - 1]} · `
+    + `${moves} move${moves === 1 ? '' : 's'} across ${raw.length} snapshots`
+    + (swing > Math.abs(net) ? ` · ${swing} places moved in total` : '');
 
   return `<div class="spark" title="${esc(title)}">
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="${esc(title)}">
