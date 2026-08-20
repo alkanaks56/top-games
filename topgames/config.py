@@ -62,6 +62,8 @@ DEFAULTS = {
         # /slack/command endpoint is served. Set true to publish the dashboard
         # and its unauthenticated /api routes as well -- rarely what you want.
         "expose_dashboard": False,
+        # Linked from the dashboard's "Send digest" control.
+        "repo_url": "https://github.com/alkanaks56/top-games",
     },
 }
 
