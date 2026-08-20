@@ -145,11 +145,12 @@ tbody tr:hover{background:var(--row-hover)}
 .num{font-family:var(--mono);font-size:13px;text-align:right;white-space:nowrap}
 .num.dim{color:var(--dim)}
 .mono-dim{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
-.spark{display:flex;align-items:flex-end;gap:2px;height:26px;width:66px}
-.spark i{flex:1;border-radius:1px;min-height:2px;background:var(--flat);opacity:.55}
-.spark.up i{background:var(--up);opacity:.85}
-.spark.down i{background:var(--down);opacity:.85}
-.spark.none{color:var(--faint);font-family:var(--mono);font-size:11px;align-items:center}
+.spark{display:flex;align-items:center;gap:7px;height:26px}
+.spark svg{width:60px;height:24px;overflow:visible;flex-shrink:0}
+.spark .lbl{font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap}
+.spark .lbl.up{color:var(--up)} .spark .lbl.down{color:var(--down)}
+.spark .lbl.flat{color:var(--faint)}
+.spark.none{color:var(--faint);font-family:var(--mono);font-size:11px}
 .price{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);
   padding:3px 9px;border-radius:5px;white-space:nowrap}
 a.g-name:hover,a.co-link:hover{color:var(--mint)}
@@ -359,23 +360,46 @@ function deltaCell(d, isNew){
   return '<span class="d flat">— 0</span>';
 }
 
+/* Rank over time as a line, not bars.
+   Two design points matter here. Rank 1 is the best rank, so the y axis is
+   inverted -- climbing draws upward, which is the direction people expect.
+   And the vertical scale keeps a minimum span, so a one-place wobble reads as a
+   gentle slope rather than filling the whole box the way a self-normalised
+   chart would. */
+const SPARK_MIN_SPAN = 8;
+
 function spark(history){
   if (!history || history.length < 2)
-    return '<div class="spark none">—</div>';
+    return '<div class="spark none">no history yet</div>';
+  const W = 60, H = 24, pad = 3;
   const lo = Math.min(...history), hi = Math.max(...history);
-  if (lo === hi){
-    // Held the same rank throughout: draw a low flat run rather than full-height
-    // bars, which would otherwise read as a solid block.
-    return `<div class="spark">${history.map(() =>
-      '<i style="height:16%"></i>').join('')}</div>`;
-  }
-  const range = hi - lo;
-  const dir = history[history.length-1] < history[0] ? 'up'
-            : history[history.length-1] > history[0] ? 'down' : '';
-  // Rank 1 is best, so invert: a smaller rank must draw a taller bar.
-  const bars = history.map(r =>
-    `<i style="height:${Math.round(18 + (1 - (r - lo)/range) * 82)}%"></i>`).join('');
-  return `<div class="spark ${dir}">${bars}</div>`;
+  const mid = (lo + hi) / 2;
+  const span = Math.max(hi - lo, SPARK_MIN_SPAN);
+  const top = mid - span / 2, bottom = mid + span / 2;
+
+  const x = i => pad + i * (W - 2 * pad) / (history.length - 1);
+  const y = r => pad + ((r - top) / (bottom - top)) * (H - 2 * pad);
+
+  const move = history[0] - history[history.length - 1];   // + means climbed
+  const cls = move > 0 ? 'up' : move < 0 ? 'down' : 'flat';
+  const stroke = move > 0 ? 'var(--up)' : move < 0 ? 'var(--down)' : 'var(--flat)';
+  const pts = history.map((r, i) => `${x(i).toFixed(1)},${y(r).toFixed(1)}`).join(' ');
+  const lastX = x(history.length - 1), lastY = y(history[history.length - 1]);
+  const label = move > 0 ? `+${move}` : move < 0 ? `${move}` : '0';
+  const title = `#${history[0]} → #${history[history.length - 1]} over ` +
+                `${history.length} snapshots`;
+
+  return `<div class="spark" title="${esc(title)}">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="${esc(title)}">
+      <line x1="0" y1="${(H/2).toFixed(1)}" x2="${W}" y2="${(H/2).toFixed(1)}"
+        stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+      <polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="1.75"
+        stroke-linejoin="round" stroke-linecap="round"
+        vector-effect="non-scaling-stroke"/>
+      <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.2" fill="${stroke}"/>
+    </svg>
+    <span class="lbl ${cls}">${label}</span>
+  </div>`;
 }
 
 function filtered(){
