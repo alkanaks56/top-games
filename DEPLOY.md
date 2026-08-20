@@ -113,3 +113,47 @@ digest on Mondays and the daily digest otherwise.
 - **The committed database grows.** `export --prune` (already in the workflow) keeps the last
   180 snapshots and 120 days of events. Rows in `apps` are never deleted, because `first_seen`
   is what stops a game being announced as new twice.
+
+---
+
+## Share to Slack (dashboard button)
+
+The dashboard's **Share to Slack** posts through the Worker, which holds the webhook. The page
+sends only a *kind* (`movers`, `new`, `chart`) — never text — so the endpoint cannot be used to
+push arbitrary content into your channel. The message itself is a file the scheduled job
+published. A 60-second cooldown per kind bounds repeat presses.
+
+Be clear-eyed about the trade-off: the dashboard is public, so **anyone who opens it can press
+Share** and post your own chart data to your channel. That is the cost of a public page with a
+send button. If that matters, put Cloudflare Access in front of the site.
+
+Three things must be set:
+
+```bash
+cd worker && wrangler secret put SLACK_WEBHOOK_URL
+```
+
+```bash
+cd worker && wrangler deploy
+```
+
+Then put the Worker URL into `config.json` so the page knows where to send:
+
+```json
+{ "web": { "worker_url": "https://topgames-slash.<you>.workers.dev" } }
+```
+
+Until `worker_url` is set, the button explains it needs the Worker rather than failing silently.
+
+## Digest format
+
+`topgames/digest.py` implements the daily and weekly messages: rating dots that encode the band
+(🟢 ≥4.7, 🟡 ≥4.0, 🔴 below, ⚪ unrated), monospaced rank columns, a two-column top 10, releases
+grouped by day with sparse days collapsed into ranges, and link buttons.
+
+A quiet day posts one compressed line rather than nothing — a missing message looks exactly like
+a broken cron job.
+
+Two parts of the spec need a **bot token** and are not implemented on the webhook: threading the
+full new-release list as a reply, and the `action_id` "Compare to last week" button. Everything
+else is in place.
