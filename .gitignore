@@ -5,3 +5,4 @@ site/
 __pycache__/
 *.pyc
 *.log
+worker/node_modules/

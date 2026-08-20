@@ -4,6 +4,8 @@ compatibility_date = "2026-01-01"
 
 [vars]
 # Your GitHub Pages URL, e.g. https://<user>.github.io/<repo>
-PAGES_BASE = "https://REPLACE-ME.github.io/top-games"
+PAGES_BASE = "https://alkanaks56.github.io/top-games"
 
-# SLACK_SIGNING_SECRET is set with:  wrangler secret put SLACK_SIGNING_SECRET
+# Secrets (never in this file):
+#   wrangler secret put SLACK_SIGNING_SECRET   -- verifies /slack/command
+#   wrangler secret put SLACK_WEBHOOK_URL      -- used by /share
