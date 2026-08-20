@@ -32,7 +32,7 @@ DEFAULTS = {
         "mention": "",
         "daily": {
             "enabled": True,
-            "time": "06:00",
+            "time": "09:00",
             "include": ["debut", "new_entry", "new_release", "climb", "exit"],
             # Skip posting entirely on a day with nothing to report, instead of
             # sending "no new games" into the channel every morning.
@@ -44,7 +44,7 @@ DEFAULTS = {
         "weekly": {
             "enabled": True,
             "day": "monday",
-            "time": "06:00",
+            "time": "09:00",
             "include": ["debut", "new_entry", "new_release", "climb", "fall", "exit"],
             "skip_if_empty": False,
             "show_top_n": 10,
@@ -77,7 +77,7 @@ DEFAULTS = {
         "repo_url": "https://github.com/alkanaks56/top-games",
         # Deployed Cloudflare Worker, e.g. https://topgames-slash.<you>.workers.dev
         # Required for the dashboard's "Share to Slack" button.
-        "worker_url": "",
+        "worker_url": "https://topgames-slash.akisualkan.workers.dev",
         # Public dashboard URL, used for the digest's buttons.
         "pages_url": "https://alkanaks56.github.io/top-games",
     },
