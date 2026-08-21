@@ -509,6 +509,11 @@ function renderHero(){
 /* Country and genre behave like the other filters: they change what is shown
    without leaving the page. Each dataset is a separate published file, so the
    change is a fetch and re-render rather than a client-side predicate. */
+/** "role_playing" -> "Role Playing" */
+function titleCase(v){
+  return String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 function datasetMap(){
   const m = new Map();
   for (const d of (D.datasets || [])){
@@ -535,7 +540,7 @@ function datasetControls(){
     <div class="ctl" ${loadingAttr()}><label>Genre</label>
       <select id="f-genre">${genres.map(g =>
         `<option value="${esc(g)}" ${g === here.genre ? 'selected' : ''}
-          >${esc(g.replace(/_/g,' '))}</option>`).join('')}</select></div>`;
+          >${esc(titleCase(g))}</option>`).join('')}</select></div>`;
 }
 
 function loadingAttr(){ return SWITCHING ? 'data-loading="1"' : ''; }
@@ -881,7 +886,7 @@ function renderBody(){
     }
     if (S.relGenre === null){
       // Default to the chart's own genre; the pool itself stays unfiltered.
-      const g = D.genre.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const g = titleCase(D.genre);
       S.relGenre = releaseGenres().some(([n]) => n === g) ? g : 'all';
     }
     el.innerHTML = `<div class="copybar">
