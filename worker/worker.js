@@ -140,16 +140,89 @@ function cors(env, extra = {}) {
  * content into the channel. A short cooldown bounds how often a public page can
  * trigger it.
  */
+const MAX_SHARE_ROWS = 60;
+const SECTION_LIMIT = 2800;
+
+/**
+ * Compose the release message from the caller's filters.
+ *
+ * The caller sends a store, a genre and an age -- never text. The rows come
+ * from the pool this project published, so the endpoint still cannot be made to
+ * post arbitrary content: the worst a caller can do is ask for a different
+ * slice of the user's own data.
+ */
+async function buildFilteredReleases(env, filters) {
+  const allow = allowedDatasets(env);
+  const countries = new Set(allow.map(d => d.split("/")[0]));
+
+  const store = String(filters.store || "").toLowerCase();
+  if (!/^[a-z]{2}$/.test(store) || !countries.has(store)) {
+    const err = new Error("unknown store"); err.status = 400; throw err;
+  }
+  // Genre is only ever compared against values already in the published file.
+  const genre = String(filters.genre || "all").slice(0, 40);
+  const ageRaw = String(filters.age || "30");
+  const age = ageRaw === "all" ? Infinity : Math.min(Math.max(Number(ageRaw) || 30, 1), 36500);
+
+  const url = `${env.PAGES_BASE.replace(/\/$/, "")}/releases/${store}.json`;
+  const res = await fetch(url, { cf: { cacheTtl: 60 } });
+  if (!res.ok) {
+    const err = new Error(`no release data for ${store.toUpperCase()}`);
+    err.status = 502; throw err;
+  }
+  let rows = await res.json();
+
+  if (Number.isFinite(age)) rows = rows.filter(r => (r.days_old ?? 1e9) <= age);
+  if (genre !== "all") rows = rows.filter(r => (r.genres || []).includes(genre));
+
+  const total = rows.length;
+  const shown = rows.slice(0, MAX_SHARE_ROWS);
+  const scope = `${genre === "all" ? "All genres" : genre} · ${store.toUpperCase()}`;
+  const window = Number.isFinite(age) ? `the last ${age} days` : "all time";
+
+  const lines = shown.map(r => {
+    const dot = !r.ratings ? "⚪" : r.rating >= 4.7 ? "🟢" : r.rating >= 4.0 ? "🟡" : "🔴";
+    const rating = r.ratings ? `${r.rating.toFixed(2)}★ (${r.ratings.toLocaleString("en-US")})`
+                             : "no ratings yet";
+    return `${dot} <${r.url}|${r.name}>  ${r.artist} · ${rating} · ${r.released}`;
+  });
+
+  const blocks = [{ type: "section", text: { type: "mrkdwn",
+    text: `*New releases — ${scope}*\n_${total} in ${window}` +
+          (total > shown.length ? `, showing ${shown.length}` : "") + `_` } }];
+  let buf = [], size = 0;
+  for (const line of lines) {
+    if (buf.length && size + line.length + 1 > SECTION_LIMIT) {
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: buf.join("\n") } });
+      buf = []; size = 0;
+    }
+    buf.push(line); size += line.length + 1;
+  }
+  if (buf.length)
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: buf.join("\n") } });
+  if (total > shown.length)
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn",
+      text: `_…and ${total - shown.length} more on the dashboard_` }] });
+
+  return {
+    username: "top_games",
+    icon_emoji: ":jigsaw:",
+    text: `New releases ${scope}: ${total} in ${window}`,
+    blocks: blocks.slice(0, 50),
+  };
+}
+
 async function handleShare(request, env) {
   if (!env.SLACK_WEBHOOK_URL) {
     return Response.json({ error: "Worker has no SLACK_WEBHOOK_URL secret set" },
       { status: 500, headers: cors(env) });
   }
-  let kind = "", dataset = "";
+  let kind = "", dataset = "", filters = null;
   try {
     const body = await request.json();
     kind = body.kind;
     dataset = String(body.dataset || "");
+    if (body.filters && typeof body.filters === "object") filters = body.filters;
   } catch {}
   if (!SHARE_KINDS.has(kind)) {
     return Response.json({ error: "unknown share kind" },
@@ -167,22 +240,34 @@ async function handleShare(request, env) {
   }
 
   const cache = caches.default;
-  const marker = new Request(`https://share.local/${dataset}/${kind}`);
+  const filterKey = filters
+    ? `${filters.store || ""}-${filters.genre || ""}-${filters.age || ""}` : "";
+  const marker = new Request(
+    `https://share.local/${dataset}/${kind}/${encodeURIComponent(filterKey)}`);
   if (await cache.match(marker)) {
     return Response.json(
       { error: `Already shared ${kind} in the last ${SHARE_COOLDOWN}s` },
       { status: 429, headers: cors(env) });
   }
 
-  const src = `${env.PAGES_BASE.replace(/\/$/, "")}${dataset ? "/" + dataset : ""}/slack/share-${kind}.json`;
   let payload;
-  try {
-    const res = await fetch(src, { cf: { cacheTtl: 60 } });
-    if (!res.ok) throw new Error(`upstream ${res.status}`);
-    payload = await res.json();
-  } catch (err) {
-    return Response.json({ error: `Could not load the message (${err.message})` },
-      { status: 502, headers: cors(env) });
+  if (kind === "new" && filters) {
+    try {
+      payload = await buildFilteredReleases(env, filters);
+    } catch (err) {
+      return Response.json({ error: err.message },
+        { status: err.status || 502, headers: cors(env) });
+    }
+  } else {
+    const src = `${env.PAGES_BASE.replace(/\/$/, "")}${dataset ? "/" + dataset : ""}/slack/share-${kind}.json`;
+    try {
+      const res = await fetch(src, { cf: { cacheTtl: 60 } });
+      if (!res.ok) throw new Error(`upstream ${res.status}`);
+      payload = await res.json();
+    } catch (err) {
+      return Response.json({ error: `Could not load the message (${err.message})` },
+        { status: 502, headers: cors(env) });
+    }
   }
 
   const post = await fetch(env.SLACK_WEBHOOK_URL, {

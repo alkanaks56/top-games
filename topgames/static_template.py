@@ -342,9 +342,16 @@ async function shareToSlack(kind, btn){
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
+    const body = {kind};
+    if (kind === 'new') {
+      // Post what is on screen, not a prebuilt list: the Worker rebuilds the
+      // message from these three values against the published pool.
+      body.filters = {store: S.relCountry, genre: S.relGenre || 'all',
+                      age: S.relAge || String(D.new_days)};
+    }
     const res = await fetch(D.worker_url.replace(/\/$/, '') + '/share', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({kind}),
+      body: JSON.stringify(body),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
@@ -826,6 +833,14 @@ function agedPool(){
   return pool.filter(r => (r.days_old ?? 1e9) <= max);
 }
 
+/** How many releases the current filters actually leave on screen. */
+function shownCount(){
+  let rows = agedPool();
+  if (S.relGenre && S.relGenre !== 'all')
+    rows = rows.filter(r => (r.genres || []).includes(S.relGenre));
+  return rows.length;
+}
+
 function releasePicker(loading){
   const uniqCountries = [...new Set((D.datasets || []).map(d => d.country))].sort();
   const total = agedPool().length;
@@ -959,14 +974,19 @@ function renderBody(){
     }
     el.innerHTML = `<div class="copybar">
         <button class="btn solid" id="shareslack">Share to Slack</button>
-        <span style="color:var(--faint);font-size:12px">Posts the
-          ${(D.new_releases || []).length} recent ${esc(D.genre)} releases for
-          ${esc(D.country.toUpperCase())} — the chart above, not the store
-          selected here.</span>
+        <span style="color:var(--faint);font-size:12px" id="sharenote"></span>
       </div>` + newReleasesView();
     foot.innerHTML = `<div>${D.new_releases.length} releases in the last ${D.new_days} days</div>`;
     const sb = el.querySelector('#shareslack');
     sb.onclick = () => shareToSlack('new', sb);
+    const note = el.querySelector('#sharenote');
+    if (note) {
+      const n = shownCount();
+      note.textContent = `Posts these ${n} ${
+        S.relGenre && S.relGenre !== 'all' ? S.relGenre + ' ' : ''}release${
+        n === 1 ? '' : 's'} for ${(S.relCountry || D.country).toUpperCase()}`
+        + (S.relAge === 'all' ? '.' : ` from the last ${S.relAge} days.`);
+    }
     const rc = el.querySelector('#f-relcountry');
     if (rc) rc.onchange = e => { S.relCountry = e.target.value; S.relPage = 1;
                                  loadReleases(S.relCountry); };
