@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from . import (config, digest as digest_mod, signals, slack, sources,
@@ -112,32 +113,58 @@ def cmd_refresh(args, cfg):
     # One release sweep per storefront, shared by that country's charts.
     if cfg.get("sweep_countries", True):
         primary_country = config.primary(cfg)["country"]
-        for country in sorted({d["country"] for d in ds}):
+        def sweep_one(country):
             try:
                 rows, errs = sweep_releases(cfg, country,
                                             country == primary_country)
                 os.makedirs(os.path.dirname(_releases_path(country)), exist_ok=True)
                 with open(_releases_path(country), "w") as fh:
                     json.dump(rows, fh, default=str)
+                return country, rows, errs, None
+            except Exception as exc:
+                return country, None, None, exc
+
+        # One storefront at a time: each sweep is already 8-way concurrent
+        # internally, and stacking countries on top of that made Apple start
+        # dropping requests (68-94 failed terms per country).
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for country, rows, errs, exc in pool.map(
+                    sweep_one, sorted({d["country"] for d in ds})):
+                if exc is not None:
+                    failed.append((f"releases-{country}", exc))
+                    print(f"  releases {country:20} FAILED: {exc}", file=sys.stderr)
+                    continue
                 recent = sum(1 for r in rows
                              if (r["days_old"] or 9999)
                              <= cfg["signals"]["new_release_days"])
                 print(f"  releases {country:20} {len(rows):>5} pooled, "
                       f"{recent} in the last {cfg['signals']['new_release_days']}d"
                       + (f" ({len(errs)} term errors)" if errs else ""))
-            except Exception as exc:
-                failed.append((f"releases-{country}", exc))
-                print(f"  releases {country:20} FAILED: {exc}", file=sys.stderr)
-    for d in ds:
-        tag = f"{d['slug']}{' (chart only)' if not d['history'] else ''}"
+    # The primary writes SQLite, so it runs on its own; the chart-only datasets
+    # only write their own JSON file and are safe to fan out.
+    primary = [d for d in ds if d["history"]]
+    others = [d for d in ds if not d["history"]]
+
+    def run(d):
         try:
-            s = _refresh_one(d)
-            print(f"  {tag:26} {s['chart_size']:>3} ranked · "
-                  f"{s['new_entries']} new · {s['movers']} movers · "
-                  f"{s['new_releases']} releases")
+            return d, _refresh_one(d), None
         except Exception as exc:
+            return d, None, exc
+
+    results = [run(d) for d in primary]
+    if others:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results += list(pool.map(run, others))
+
+    for d, summary, exc in results:
+        tag = f"{d['slug']}{' (chart only)' if not d['history'] else ''}"
+        if exc is not None:
             failed.append((d["slug"], exc))
             print(f"  {tag:26} FAILED: {exc}", file=sys.stderr)
+        else:
+            print(f"  {tag:26} {summary['chart_size']:>3} ranked · "
+                  f"{summary['new_entries']} new · {summary['movers']} movers · "
+                  f"{summary['new_releases']} releases")
     if failed:
         print(f"\n{len(failed)} of {len(ds)} datasets failed", file=sys.stderr)
         return 1

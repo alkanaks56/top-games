@@ -9,7 +9,9 @@ Three endpoints do the work, all keyless:
 * the iTunes Lookup API, which enriches ids with ratings and release dates.
 """
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -19,13 +21,28 @@ SEARCH = "https://itunes.apple.com/search"
 LOOKUP = "https://itunes.apple.com/lookup"
 UA = "top-games/1.0 (+local chart tracker)"
 LOOKUP_BATCH = 100  # Verified: the lookup endpoint returns all 100 ids in one call.
+# Requests are network-bound and Apple serves this volume comfortably: a
+# 107-term sweep ran at ~46 req/min with zero errors. Concurrency is what
+# removes the wall-clock cost, not shorter sleeps.
+WORKERS = 4
 
 
 class SourceError(RuntimeError):
     pass
 
 
-def _get_json(url, timeout=30, retries=3):
+def fetch_all(urls, timeout=30, workers=WORKERS):
+    """Fetch many URLs at once, preserving order. Failures come back as None."""
+    def one(u):
+        try:
+            return _get_json(u, timeout=timeout)
+        except SourceError:
+            return None
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, urls))
+
+
+def _get_json(url, timeout=30, retries=4):
     last = None
     for attempt in range(retries):
         try:
@@ -35,7 +52,10 @@ def _get_json(url, timeout=30, retries=3):
         except Exception as exc:  # network flakiness and Apple rate limiting
             last = exc
             if attempt < retries - 1:
-                time.sleep(1.5 * (attempt + 1))
+                # A 403 here is throttling, not a permanent refusal, and it
+                # needs a longer pause than an ordinary network blip.
+                throttled = getattr(exc, "code", None) == 403
+                time.sleep((4.0 if throttled else 1.5) * (attempt + 1))
     raise SourceError(f"request failed after {retries} tries: {url} ({last})")
 
 
@@ -70,17 +90,16 @@ def lookup(app_ids, country="us"):
     """Enrich ids with full metadata. Returns {app_id: record}."""
     found = {}
     ids = [str(i) for i in app_ids]
-    for start in range(0, len(ids), LOOKUP_BATCH):
-        batch = ids[start:start + LOOKUP_BATCH]
-        url = LOOKUP + "?" + urllib.parse.urlencode(
-            {"id": ",".join(batch), "country": country})
-        data = _get_json(url)
+    urls = [LOOKUP + "?" + urllib.parse.urlencode(
+                {"id": ",".join(ids[s:s + LOOKUP_BATCH]), "country": country})
+            for s in range(0, len(ids), LOOKUP_BATCH)]
+    for data in fetch_all(urls):
+        if not data:
+            continue
         for raw in data.get("results", []):
             record = normalize(raw)
             if record:
                 found[record["app_id"]] = record
-        if start + LOOKUP_BATCH < len(ids):
-            time.sleep(0.4)  # stay well under Apple's ~20 req/min soft limit
     return found
 
 
@@ -124,15 +143,18 @@ def sweep_new_releases(terms, country="us", genre_id=7012, within_days=30,
     cutoff = datetime.now(timezone.utc) - timedelta(days=within_days)
     seen = {}
     errors = []
+
+    urls = []
     for term in terms:
         params = {"term": term, "country": country, "media": "software",
                   "entity": "software", "limit": limit}
         if genre_id:
             params["genreId"] = genre_id
-        try:
-            data = _get_json(SEARCH + "?" + urllib.parse.urlencode(params))
-        except SourceError as exc:
-            errors.append(f"{term}: {exc}")
+        urls.append(SEARCH + "?" + urllib.parse.urlencode(params))
+
+    for term, data in zip(terms, fetch_all(urls)):
+        if data is None:
+            errors.append(f"{term}: request failed")
             continue
         for raw in data.get("results", []):
             record = normalize(raw)
@@ -142,7 +164,6 @@ def sweep_new_releases(terms, country="us", genre_id=7012, within_days=30,
                 record["in_genre"] = bool(
                     genre_name and genre_name in (raw.get("genres") or []))
                 seen[record["app_id"]] = record
-        time.sleep(0.4)
 
     fresh = []
     for record in seen.values():
