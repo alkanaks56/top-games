@@ -81,11 +81,21 @@ def refresh(conn, cfg, verbose=True):
                 })
 
     # New releases across the whole genre, not just the ones that charted.
-    log(f"Sweeping {len(cfg['search_terms'])} search terms for new releases...")
+    log(f"Sweeping {len(cfg['search_terms'])} genre terms + "
+        f"{len(cfg.get('discovery_terms') or [])} discovery terms...")
     genre_name = cfg["genre"].replace("_", " ").title()
+    # Genre terms are searched inside the genre; discovery terms are searched
+    # across the whole store so other genres' releases surface too.
     fresh, all_found, errors = sources.sweep_new_releases(
         cfg["search_terms"], country, genre_id,
         within_days=sig["new_release_days"], genre_name=genre_name)
+    wide_terms = cfg.get("discovery_terms") or []
+    if wide_terms:
+        _f, wide, wide_errs = sources.sweep_new_releases(
+            wide_terms, country, None,
+            within_days=sig["new_release_days"], genre_name=None)
+        all_found.update({k: v for k, v in wide.items() if k not in all_found})
+        errors += wide_errs
     for err in errors:
         log(f"  warning: search term failed -- {err}")
 

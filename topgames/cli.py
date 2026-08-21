@@ -210,13 +210,11 @@ def cmd_export(args, cfg):
             failed.append(d["slug"])
             print(f"  {d['slug']:26} FAILED: {exc}", file=sys.stderr)
 
-    if len(entries) > 1:
-        # With a single dataset the root stays the dashboard itself; a listing
-        # page holding one card would be a step backwards.
-        staticgen.build_index(entries, outdir)
-        print(f"  index -> {outdir}/index.html ({len(entries)} datasets)")
-    elif entries:
+    if entries:
+        # No landing page: the root IS the primary dashboard, and country and
+        # genre are filters inside it like every other filter.
         staticgen.write_manifest(entries, outdir)
+        print(f"  manifest -> {outdir}/manifest.json ({len(entries)} datasets)")
     return 1 if failed else 0
 
 

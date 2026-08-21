@@ -76,6 +76,13 @@ DEFAULTS = {
         # Cap list lengths in Slack so messages stay readable.
         "max_items_per_section": 10,
     },
+    # Generic terms swept alongside the genre-specific ones below. Without these
+    # the discovery pool inherits the genre's vocabulary and the "all genres"
+    # view has almost nothing extra in it.
+    "discovery_terms": [
+        "game", "games", "arcade", "adventure", "racing", "strategy",
+        "simulator", "idle", "tycoon", "card game", "board game", "rpg",
+    ],
     "search_terms": [
         "puzzle", "jigsaw", "sudoku", "match 3", "block puzzle", "word puzzle",
         "brain", "escape room", "merge", "tile", "crossword", "logic",

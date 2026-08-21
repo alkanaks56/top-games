@@ -62,6 +62,12 @@ def _migrate(conn):
 
 
 # Columns a record may omit; filled in so adding a field cannot break callers.
+APP_COLUMNS = {
+    "app_id", "name", "artist", "url", "artist_url", "icon", "price",
+    "formatted_price", "genres", "primary_genre", "content_rating",
+    "release_date", "version_date", "avg_rating", "rating_count", "description",
+}
+
 APP_DEFAULTS = {
     "artist": "", "url": "", "artist_url": "", "icon": "", "price": 0.0,
     "formatted_price": "", "genres": "", "primary_genre": "", "content_rating": "",
@@ -75,6 +81,7 @@ def upsert_apps(conn, records):
     ts = now_iso()
     for rec in records:
         rec = {**APP_DEFAULTS, **rec}
+        rec = {k: v for k, v in rec.items() if k in APP_COLUMNS}
         conn.execute("""
             INSERT INTO apps (app_id, name, artist, url, artist_url, icon, price,
                 formatted_price, genres, primary_genre, content_rating, release_date,

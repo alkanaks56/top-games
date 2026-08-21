@@ -234,7 +234,6 @@ a.g-name:hover,a.co-link:hover{color:var(--mint)}
 BODY = r"""
 <header class="topbar">
   <div class="brand">TOP<i>/</i>GAMES <span>__SCOPE__</span></div>
-  <select class="dspick" id="dspick" aria-label="Chart"></select>
   <nav class="tabs" id="tabs">
     <button data-tab="top" class="on">Top 100</button>
     <button data-tab="new">New releases</button>
@@ -267,7 +266,7 @@ BODY = r"""
 """
 
 SCRIPT = r"""
-const D = __DATA__;
+let D = __DATA__;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -275,15 +274,17 @@ const num = n => (n || 0).toLocaleString('en-US');
 const PAGE_SIZES = [10, 50, 100];
 
 const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1, perPage:10,
-            q:'', publisher:'all', minRating:0, released:'any' };
+            q:'', publisher:'all', minRating:0, released:'any', relGenre:null };
 
 /* The delta column can only describe the span the database actually covers. */
 /* Chart-only datasets carry no rank history, so every movement affordance is
-   suppressed rather than rendered as a column of dashes. */
-const HAS_HISTORY = D.history !== false;
-const spanLabel = D.span_days >= 7 ? 'Δ 7D'
-                : D.span_days >= 1 ? `Δ ${D.span_days}D`
-                : 'Δ TODAY';
+   suppressed rather than rendered as a column of dashes. Read through a call,
+   not a const: the active dataset changes without a page load. */
+function spanLabelNow(){
+  return D.span_days >= 7 ? 'Δ 7D'
+       : D.span_days >= 1 ? `Δ ${D.span_days}D`
+       : 'Δ TODAY';
+}
 
 function companyLink(r){
   return r.artist_url
@@ -500,12 +501,93 @@ function renderHero(){
     `<div class="fig ${c}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 }
 
+
+/* Country and genre behave like the other filters: they change what is shown
+   without leaving the page. Each dataset is a separate published file, so the
+   change is a fetch and re-render rather than a client-side predicate. */
+function datasetMap(){
+  const m = new Map();
+  for (const d of (D.datasets || [])){
+    if (!m.has(d.country)) m.set(d.country, []);
+    m.get(d.country).push(d);
+  }
+  return m;
+}
+
+function datasetControls(){
+  const list = D.datasets || [];
+  if (list.length < 2) return '';
+  const m = datasetMap();
+  const here = list.find(d => d.slug === D.slug) || list[0];
+  const countries = [...m.keys()].sort();
+  // Only genres actually published for the selected country, so the control
+  // can never offer a combination that does not exist.
+  const genres = (m.get(here.country) || []).map(d => d.genre).sort();
+  return `
+    <div class="ctl ${countries.length > 1 ? '' : ''}" ${loadingAttr()}><label>Country</label>
+      <select id="f-country">${countries.map(c =>
+        `<option value="${esc(c)}" ${c === here.country ? 'selected' : ''}
+          >${esc(c.toUpperCase())}</option>`).join('')}</select></div>
+    <div class="ctl" ${loadingAttr()}><label>Genre</label>
+      <select id="f-genre">${genres.map(g =>
+        `<option value="${esc(g)}" ${g === here.genre ? 'selected' : ''}
+          >${esc(g.replace(/_/g,' '))}</option>`).join('')}</select></div>`;
+}
+
+function loadingAttr(){ return SWITCHING ? 'data-loading="1"' : ''; }
+
+let SWITCHING = false;
+
+async function switchDataset(country, genre){
+  const list = D.datasets || [];
+  let target = list.find(d => d.country === country && d.genre === genre);
+  // Changing country can strand the current genre; fall back to that country's
+  // first published chart rather than failing.
+  if (!target) target = list.find(d => d.country === country);
+  if (!target || target.slug === D.slug) return;
+
+  SWITCHING = true; renderControls();
+  try {
+    const res = await fetch(`${D.root || ''}${target.path}/data/chart.json`,
+                            {cache: 'no-cache'});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const next = await res.json();
+    // The fetched file carries the other page's relative depth; keep ours.
+    next.root = D.root;
+    next.datasets = D.datasets;
+    D = next;
+    S.page = 1; S.publisher = 'all'; S.q = ''; S.relGenre = null;
+    if (!HAS_HISTORY_NOW() && S.tab === 'movers') S.tab = 'top';
+    if (!HAS_HISTORY_NOW() && S.view === 'timeline') S.view = 'table';
+    syncTabs();
+    renderTicker();
+    render();
+    localiseSync();
+    history.replaceState(null, '', `${D.root || ''}${target.path}/`);
+    toast(`Showing ${target.title}`);
+  } catch (err) {
+    toast(`Could not load that chart: ${err.message}`);
+  } finally {
+    SWITCHING = false; renderControls();
+  }
+}
+
+function HAS_HISTORY_NOW(){ return D.history !== false; }
+
+function syncTabs(){
+  const movers = document.querySelector('#tabs button[data-tab="movers"]');
+  if (movers) movers.style.display = HAS_HISTORY_NOW() ? '' : 'none';
+  document.querySelectorAll('#tabs button').forEach(b =>
+    b.classList.toggle('on', b.dataset.tab === S.tab));
+}
+
 function renderControls(){
   if (S.tab === 'digest' || S.tab === 'publishers'){ $('#controls').innerHTML=''; return; }
   const pubs = [...new Set(D.items.map(i => i.artist))].sort();
   const sortActive = S.sort !== 'rank' || S.dir !== 1;
   $('#controls').innerHTML = `
    <div class="controls">
+    ${datasetControls()}
     <div class="ctl ${sortActive?'active':''}"><label>Sort</label>
       <select id="f-sort">
         <option value="rank|1">Rank, best first</option>
@@ -531,7 +613,7 @@ function renderControls(){
         <option value="90">Last 90 days</option><option value="365">Last year</option>
       </select></div>
     <div class="seg">
-      ${(HAS_HISTORY ? ['table','grid','timeline'] : ['table','grid']).map(v =>
+      ${(HAS_HISTORY_NOW() ? ['table','grid','timeline'] : ['table','grid']).map(v =>
         `<button data-view="${v}" class="${S.view===v?'on':''}">${v}</button>`).join('')}
     </div>
     <div class="search"><input id="f-q" type="search" value="${esc(S.q)}"
@@ -540,6 +622,9 @@ function renderControls(){
   $('#f-sort').value = `${S.sort}|${S.dir}`;
   $('#f-rating').value = String(S.minRating);
   $('#f-rel').value = S.released;
+  const fc = $('#f-country'), fg = $('#f-genre');
+  if (fc) fc.onchange = e => switchDataset(e.target.value, $('#f-genre').value);
+  if (fg) fg.onchange = e => switchDataset($('#f-country').value, e.target.value);
   $('#f-sort').onchange = e => { const [k,d] = e.target.value.split('|');
     S.sort = k; S.dir = Number(d); S.page = 1; render(); };
   $('#f-pub').onchange = e => { S.publisher = e.target.value; S.page = 1; render(); };
@@ -559,13 +644,13 @@ const TH = (key,label,extra='') => {
 function tableFor(rows){
   return `<div class="panel"><div class="scroll"><table>
     <thead><tr>
-      ${TH('rank','#')}${HAS_HISTORY ? TH('delta',spanLabel) : ''}${TH('name','Game')}
+      ${TH('rank','#')}${HAS_HISTORY_NOW() ? TH('delta',spanLabelNow()) : ''}${TH('name','Game')}
       ${TH('artist','Company')}${TH('rating','Rating')}${TH('ratings','Ratings')}
-      ${TH('released','Released')}${HAS_HISTORY ? '<th>Rank trend</th>' : ''}
+      ${TH('released','Released')}${HAS_HISTORY_NOW() ? '<th>Rank trend</th>' : ''}
     </tr></thead><tbody>
     ${rows.map(r => `<tr>
       <td class="c-rank">${String(r.rank).padStart(2,'0')}</td>
-      ${HAS_HISTORY ? `<td class="c-d">${deltaCell(r.delta, r.is_new_entry)}</td>` : ''}
+      ${HAS_HISTORY_NOW() ? `<td class="c-d">${deltaCell(r.delta, r.is_new_entry)}</td>` : ''}
       <td><div class="game">
         <a href="${esc(r.url)}" target="_blank" rel="noopener">
           <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
@@ -582,7 +667,7 @@ function tableFor(rows){
         <div class="bar"><i style="width:${(r.rating/5*100).toFixed(1)}%"></i></div></td>
       <td class="num">${num(r.ratings)}</td>
       <td class="num dim">${esc(r.released)}</td>
-      ${HAS_HISTORY ? `<td>${spark(r.history)}</td>` : ''}
+      ${HAS_HISTORY_NOW() ? `<td>${spark(r.history)}</td>` : ''}
     </tr>`).join('')}
     </tbody></table></div></div>`;
 }
@@ -646,22 +731,52 @@ function publishersView(){
     </tr>`).join('')}</tbody></table></div></div>`;
 }
 
+function releaseGenres(){
+  const counts = new Map();
+  for (const r of (D.new_releases || []))
+    for (const g of (r.genres || []))
+      counts.set(g, (counts.get(g) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
 function newReleasesView(){
-  let rows = D.new_releases;
+  let rows = D.new_releases || [];
+  const total = rows.length;
+  // The sweep collects every genre it turns up; this narrows the view without
+  // narrowing the data, so the tracked genre is a default rather than a cage.
+  if (S.relGenre !== 'all')
+    rows = rows.filter(r => (r.genres || []).includes(S.relGenre));
+  const shown = rows.length;
   if (S.q){
     const q = S.q.toLowerCase();
     rows = rows.filter(r => (r.name + ' ' + r.artist).toLowerCase().includes(q));
   }
+  const picker = `<div class="controls">
+    <div class="ctl ${S.relGenre !== 'all' ? 'active' : ''}"><label>Genre</label>
+      <select id="f-relgenre">
+        <option value="all" ${S.relGenre === 'all' ? 'selected' : ''}
+          >All genres (${total})</option>
+        ${releaseGenres().map(([g, n]) =>
+          `<option value="${esc(g)}" ${S.relGenre === g ? 'selected' : ''}
+            >${esc(g)} (${n})</option>`).join('')}
+      </select></div>
+    <div class="search"><input id="f-relq" type="search" value="${esc(S.q)}"
+      placeholder="Search title or company…"></div>
+    </div>`;
   if (!rows.length)
-    return `<div class="panel"><div class="empty">
-      No ${esc(D.genre.toLowerCase())} games released in the last ${D.new_days} days.</div></div>`;
-  return `<div class="note">Every tracked ${esc(D.genre.toLowerCase())} release from the
-    last ${D.new_days} days — <b>${rows.length}</b> games, of which
-    <b>${rows.filter(r => r.rank).length}</b> have reached the top
-    ${D.stats.tracked}.</div>
+    return picker + `<div class="panel"><div class="empty">
+      Nothing released in the last ${D.new_days} days matches that filter.</div></div>`;
+  return picker + `<div class="note">${
+      S.relGenre === 'all'
+        ? `Every release the sweep found in the last ${D.new_days} days`
+        : `<b>${esc(S.relGenre)}</b> releases from the last ${D.new_days} days`
+    } — <b>${shown}</b> games${(() => {
+      const c = rows.filter(r => r.rank).length;
+      return c ? `, of which <b>${c}</b> ${c === 1 ? 'has' : 'have'} reached the top ${D.stats.tracked}` : '';
+    })()}.</div>
     <div class="panel"><div class="scroll"><table>
-    <thead><tr><th>Age</th><th>Game</th><th>Company</th><th>Rating</th>
-      <th>Ratings</th><th>Released</th><th>Chart</th></tr></thead><tbody>
+    <thead><tr><th>Age</th><th>Game</th><th>Company</th><th>Genre</th>
+      <th>Rating</th><th>Ratings</th><th>Released</th><th>Chart</th></tr></thead><tbody>
     ${rows.map(r => `<tr>
       <td class="c-rank">${r.days_old ?? '—'}d</td>
       <td><div class="game">
@@ -672,6 +787,7 @@ function newReleasesView(){
              r.rank ? `<span class="tag top100">top 100</span>` : ''}
           <div class="g-sub">${esc(r.genre)}</div></div></div></td>
       <td><div class="co">${companyLink(r)}</div></td>
+      <td class="g-sub">${esc((r.genres || []).slice(0, 2).join(' / ') || '—')}</td>
       <td class="rating"><span class="star">★</span>${r.rating ? r.rating.toFixed(2) : '—'}</td>
       <td class="num">${num(r.ratings)}</td>
       <td class="num dim">${esc(r.released)}</td>
@@ -708,6 +824,11 @@ function renderBody(){
     return;
   }
   if (S.tab === 'new'){
+    if (S.relGenre === null){
+      // Default to the chart's own genre; the pool itself stays unfiltered.
+      const g = D.genre.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      S.relGenre = releaseGenres().some(([n]) => n === g) ? g : 'all';
+    }
     el.innerHTML = `<div class="copybar">
         <button class="btn solid" id="shareslack">Share to Slack</button>
         <span style="color:var(--faint);font-size:12px">Posts all
@@ -716,6 +837,10 @@ function renderBody(){
     foot.innerHTML = `<div>${D.new_releases.length} releases in the last ${D.new_days} days</div>`;
     const sb = el.querySelector('#shareslack');
     sb.onclick = () => shareToSlack('new', sb);
+    const rg = el.querySelector('#f-relgenre');
+    if (rg) rg.onchange = e => { S.relGenre = e.target.value; renderBody(); };
+    const rq = el.querySelector('#f-relq');
+    if (rq) rq.oninput = e => { S.q = e.target.value; renderBody(); };
     return;
   }
 
@@ -829,7 +954,7 @@ $('#csv').onclick = () => {
 
 /* The job runs in UTC; showing that raw reads as the wrong time for everyone
    outside it. Render the instant in whatever zone the viewer is actually in. */
-(function localiseSync(){
+function localiseSync(){
   const el = document.getElementById('synced');
   const t = new Date(D.captured_at);
   if (isNaN(t)) return;
@@ -842,29 +967,10 @@ $('#csv').onclick = () => {
             : `${Math.floor(mins/1440)}d ago`;
   el.textContent = `${hhmm} (${ago})`;
   el.title = `${t.toLocaleString()} · ${zone}\nUTC: ${D.captured_at}`;
-})();
+}
 
-/* Datasets are separate pages, so switching is a navigation rather than a
-   fetch — each page only ever carries its own payload. */
-(function datasetPicker(){
-  const el = document.getElementById('dspick');
-  if (!el) return;
-  const list = D.datasets || [];
-  if (list.length < 2){ el.style.display = 'none'; return; }
-  el.innerHTML = list.map(d =>
-    `<option value="${d.path}" ${d.slug === D.slug ? 'selected' : ''}>${d.title}</option>`
-  ).join('');
-  el.onchange = () => { location.href = (D.root || '') + el.value + '/'; };
-})();
-
-/* A chart-only dataset has no history, so movement UI would be dead weight. */
-(function hideMovementUI(){
-  if (D.history !== false) return;
-  const t = document.querySelector('#tabs button[data-tab="movers"]');
-  if (t) t.remove();
-  document.body.classList.add('no-history');
-})();
-
+localiseSync();
+syncTabs();
 renderTicker();
 render();
 """

@@ -126,17 +126,21 @@ def sweep_new_releases(terms, country="us", genre_id=7012, within_days=30,
     errors = []
     for term in terms:
         params = {"term": term, "country": country, "media": "software",
-                  "entity": "software", "genreId": genre_id, "limit": limit}
+                  "entity": "software", "limit": limit}
+        if genre_id:
+            params["genreId"] = genre_id
         try:
             data = _get_json(SEARCH + "?" + urllib.parse.urlencode(params))
         except SourceError as exc:
             errors.append(f"{term}: {exc}")
             continue
         for raw in data.get("results", []):
-            if genre_name and genre_name not in (raw.get("genres") or []):
-                continue
             record = normalize(raw)
             if record:
+                # Everything the sweep turns up is kept so the dashboard can
+                # show unfiltered releases; the genre split happens below.
+                record["in_genre"] = bool(
+                    genre_name and genre_name in (raw.get("genres") or []))
                 seen[record["app_id"]] = record
         time.sleep(0.4)
 
@@ -145,6 +149,8 @@ def sweep_new_releases(terms, country="us", genre_id=7012, within_days=30,
         released = _parse_dt(record["release_date"])
         if released and released >= cutoff:
             record["days_old"] = (datetime.now(timezone.utc) - released).days
-            fresh.append(record)
+            # `fresh` drives the digest, which stays scoped to the tracked genre.
+            if record.get("in_genre", True):
+                fresh.append(record)
     fresh.sort(key=lambda r: r["days_old"])
     return fresh, seen, errors

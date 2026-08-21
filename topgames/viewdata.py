@@ -143,11 +143,12 @@ def build(conn, cfg):
     # very few brand-new games reach the top 100 in their first month.
     charted = {i["app_id"]: i["rank"] for i in items}
     cutoff = (now - timedelta(days=new_days)).isoformat()
-    genre_name = cfg["genre"].replace("_", " ").title()
+    # Unfiltered on purpose: the dashboard offers a genre dropdown over these,
+    # defaulting to the tracked genre but able to show everything found.
     fresh_rows = conn.execute("""
-        SELECT * FROM apps WHERE release_date >= ? AND genres LIKE ?
-        ORDER BY release_date DESC LIMIT 300
-    """, (cutoff, f"%{genre_name}%")).fetchall()
+        SELECT * FROM apps WHERE release_date >= ?
+        ORDER BY release_date DESC LIMIT 600
+    """, (cutoff,)).fetchall()
     new_releases = []
     for r in fresh_rows:
         released = _parse(r["release_date"])
@@ -161,6 +162,8 @@ def build(conn, cfg):
             "released": (r["release_date"] or "")[:10],
             "days_old": (now - released).days if released else None,
             "rank": charted.get(r["app_id"]),
+            "genres": [g for g in (r["genres"] or "").split(",")
+                       if g and g != "Games"],
         })
 
     return {
