@@ -19,6 +19,16 @@ GENRES = {
 DEFAULTS = {
     "country": "us",
     "genre": "puzzle",
+    # Charts to publish. The primary keeps full history (rank deltas, movers,
+    # the Slack digest); the rest are chart-only, fetched fresh each run and
+    # stored nowhere, which is why they cost 2 requests instead of 17.
+    # Add an entry here and to worker/wrangler.toml's DATASETS to publish more.
+    "datasets": [
+        {"country": "us", "genre": "puzzle", "primary": True, "history": True},
+        {"country": "tr", "genre": "puzzle"},
+        {"country": "us", "genre": "strategy"},
+        {"country": "gb", "genre": "word"},
+    ],
     "chart": "topfreeapplications",
     "chart_size": 100,
     "slack": {
@@ -136,3 +146,53 @@ def save_example(path=None):
     with open(path, "w") as fh:
         json.dump(DEFAULTS, fh, indent=2)
     return path
+
+
+def datasets(cfg):
+    """Resolve cfg into one fully-populated config per dataset.
+
+    With no `datasets` list configured this yields a single primary entry built
+    from the top-level country/genre, so an untouched config behaves exactly as
+    it did before multi-dataset support existed.
+    """
+    raw = cfg.get("datasets") or []
+    if not raw:
+        raw = [{"country": cfg["country"], "genre": cfg["genre"],
+                "primary": True, "history": True}]
+
+    out, seen_primary = [], False
+    for entry in raw:
+        country = (entry.get("country") or cfg["country"]).lower()
+        genre = (entry.get("genre") or cfg["genre"]).lower()
+        primary = bool(entry.get("primary")) and not seen_primary
+        if primary:
+            seen_primary = True
+        d = dict(cfg)
+        d.update({
+            "country": country,
+            "genre": genre,
+            "genre_id": GENRES.get(genre, GENRES["puzzle"]),
+            "chart": entry.get("chart", cfg["chart"]),
+            "chart_size": int(entry.get("chart_size", cfg["chart_size"])),
+            "slug": f"{country}-{genre}",
+            "outdir_rel": f"{country}/{genre}",
+            "primary": primary,
+            # Only a dataset with history can show movement or feed a digest.
+            "history": bool(entry.get("history", primary)),
+        })
+        d["db_path"] = (DB_PATH if primary
+                        else os.path.join(ROOT, "data", f"{d['slug']}.db"))
+        out.append(d)
+
+    if not seen_primary and out:
+        out[0]["primary"] = True
+        out[0]["history"] = True
+        out[0]["db_path"] = DB_PATH
+    return out
+
+
+def primary(cfg):
+    for d in datasets(cfg):
+        if d["primary"]:
+            return d
+    return datasets(cfg)[0]

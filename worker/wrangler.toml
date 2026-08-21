@@ -6,6 +6,10 @@ compatibility_date = "2026-01-01"
 # Your GitHub Pages URL, e.g. https://<user>.github.io/<repo>
 PAGES_BASE = "https://alkanaks56.github.io/top-games"
 
+# Reachable charts, primary first. Only these can be requested; the fetch URL is
+# built from the matched entry, never from user input.
+DATASETS = "us/puzzle,tr/puzzle,us/strategy,gb/word"
+
 # Secrets (never in this file):
 #   wrangler secret put SLACK_SIGNING_SECRET   -- verifies /slack/command
 #   wrangler secret put SLACK_WEBHOOK_URL      -- used by /share

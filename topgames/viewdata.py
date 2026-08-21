@@ -179,3 +179,72 @@ def build(conn, cfg):
             "new_releases": len(new_releases),
         },
     }
+
+
+def build_snapshot(entries, meta, cfg):
+    """Build the view payload from a freshly fetched chart, with no history.
+
+    Same shape as build(), with the history-derived fields empty: the template
+    already renders a null delta as a dash and a short history as a flat spark,
+    so nothing downstream needs to branch.
+    """
+    now = datetime.now(timezone.utc)
+    new_days = cfg["signals"]["new_release_days"]
+
+    publisher_counts = {}
+    for _rank, app_id in entries:
+        rec = meta.get(app_id)
+        if rec:
+            publisher_counts[rec["artist"]] = publisher_counts.get(rec["artist"], 0) + 1
+
+    items = []
+    for rank, app_id in entries:
+        r = meta.get(app_id)
+        if not r:
+            continue
+        released = _parse(r.get("release_date"))
+        age = (now - released).days if released else None
+        items.append({
+            "rank": rank, "app_id": app_id, "name": r["name"],
+            "artist": r["artist"] or "Unknown", "url": r["url"],
+            "artist_url": r.get("artist_url") or "", "icon": r["icon"],
+            "genre": _genre_label(r["genres"]),
+            "rating": round(r["avg_rating"] or 0, 2),
+            "ratings": r["rating_count"] or 0,
+            "released": (r.get("release_date") or "")[:10],
+            "price": r["formatted_price"] or "Free",
+            "delta": None, "prev_rank": None, "history": [],
+            "titles_charting": publisher_counts.get(r["artist"], 1),
+            "is_new_release": age is not None and age <= new_days,
+            "is_new_entry": False,
+        })
+
+    publishers = {}
+    for i in items:
+        p = publishers.setdefault(i["artist"], {
+            "artist": i["artist"], "artist_url": i["artist_url"], "titles": 0,
+            "best_rank": 999, "ratings_total": 0, "rating_sum": 0.0, "net_delta": 0})
+        p["titles"] += 1
+        p["best_rank"] = min(p["best_rank"], i["rank"])
+        p["ratings_total"] += i["ratings"]
+        p["rating_sum"] += i["rating"]
+    for p in publishers.values():
+        p["avg_rating"] = round(p["rating_sum"] / p["titles"], 2)
+        del p["rating_sum"]
+
+    ratings = [i["rating"] for i in items if i["rating"]]
+    return {
+        "captured_at": now.isoformat(timespec="seconds"),
+        "span_days": 0,
+        "items": items,
+        "movers": [],
+        "new_releases": [i for i in items if i["is_new_release"]],
+        "publishers": sorted(publishers.values(),
+                             key=lambda p: (-p["titles"], p["best_rank"])),
+        "stats": {
+            "tracked": len(items), "climbing": 0, "falling": 0,
+            "median_rating": round(statistics.median(ratings), 2) if ratings else 0,
+            "publishers": len(publishers),
+            "new_releases": sum(1 for i in items if i["is_new_release"]),
+        },
+    }

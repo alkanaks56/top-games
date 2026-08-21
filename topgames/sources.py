@@ -105,7 +105,8 @@ def normalize(raw):
         "version_date": raw.get("currentVersionReleaseDate") or "",
         "avg_rating": float(raw.get("averageUserRating") or 0.0),
         "rating_count": int(raw.get("userRatingCount") or 0),
-        "description": (raw.get("description") or "")[:800],
+        # Not stored: nothing reads it, and it was half the database file.
+        "description": "",
     }
 
 

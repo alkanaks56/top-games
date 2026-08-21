@@ -5,7 +5,8 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from . import config, digest as digest_mod, signals, slack, staticgen, store, web
+from . import (config, digest as digest_mod, signals, slack, sources,
+               staticgen, store, viewdata, web)
 from .scheduler import install_launchd, uninstall_launchd, schedule_status
 
 
@@ -25,7 +26,62 @@ def cmd_init(args, cfg):
     return 0
 
 
+def _view_path(d):
+    return os.path.join(config.ROOT, "data", f"{d['slug']}.view.json")
+
+
+def _fetch_snapshot(d):
+    """Fetch and shape a chart-only dataset. Two requests, nothing persisted."""
+    entries = sources.fetch_chart(d["country"], d["chart"],
+                                  d["genre_id"], d["chart_size"])
+    meta = sources.lookup([a for _, a in entries], d["country"])
+    return viewdata.build_snapshot(entries, meta, d)
+
+
+def _refresh_one(d):
+    """Refresh a single dataset. Chart-only datasets keep no history."""
+    if not d["history"]:
+        view = _fetch_snapshot(d)
+        # refresh and export run as separate processes, so hand the fetched
+        # chart over on disk rather than re-requesting it minutes later.
+        os.makedirs(os.path.dirname(_view_path(d)), exist_ok=True)
+        with open(_view_path(d), "w") as fh:
+            json.dump(view, fh, default=str)
+        return {"chart_size": len(entries_count(view)), "baseline": False,
+                "events": 0, "new_entries": 0, "exits": 0, "movers": 0,
+                "new_releases": len(view["new_releases"]), "chart_only": True}
+    conn = store.connect(d["db_path"])
+    try:
+        return signals.refresh(conn, d, verbose=False)
+    finally:
+        conn.close()
+
+
+def entries_count(view):
+    return view["items"]
+
+
 def cmd_refresh(args, cfg):
+    """Refresh every configured dataset, isolating failures."""
+    ds = config.datasets(cfg)
+    failed = []
+    for d in ds:
+        tag = f"{d['slug']}{' (chart only)' if not d['history'] else ''}"
+        try:
+            s = _refresh_one(d)
+            print(f"  {tag:26} {s['chart_size']:>3} ranked · "
+                  f"{s['new_entries']} new · {s['movers']} movers · "
+                  f"{s['new_releases']} releases")
+        except Exception as exc:
+            failed.append((d["slug"], exc))
+            print(f"  {tag:26} FAILED: {exc}", file=sys.stderr)
+    if failed:
+        print(f"\n{len(failed)} of {len(ds)} datasets failed", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_refresh_primary(args, cfg):
     conn = store.connect()
     summary = signals.refresh(conn, cfg)
     print(f"\nSnapshot #{summary['snapshot_id']}: {summary['chart_size']} ranked apps, "
@@ -53,8 +109,8 @@ def cmd_refresh(args, cfg):
 
 
 def cmd_digest(args, cfg):
-    conn = store.connect()
-    payload, ids = digest_mod.build(conn, cfg, args.period)
+    conn = store.connect(config.primary(cfg)["db_path"])
+    payload, ids = digest_mod.build(conn, config.primary(cfg), args.period)
     if payload is None:
         print(f"Nothing to report and skip_if_empty is on -- no {args.period} digest sent.")
         return 0
@@ -98,7 +154,8 @@ def cmd_serve(args, cfg):
 
 
 def cmd_chart(args, cfg):
-    conn = store.connect()
+    cfg = config.primary(cfg)
+    conn = store.connect(cfg["db_path"])
     snap, rows = store.latest_chart(conn, cfg["chart"])
     if not snap:
         print("No data yet -- run:  python3 -m topgames refresh")
@@ -114,6 +171,56 @@ def cmd_chart(args, cfg):
 
 
 def cmd_export(args, cfg):
+    """Publish every dataset into its own subtree, plus a root index."""
+    ds = config.datasets(cfg)
+    listing = [{"country": d["country"], "genre": d["genre"], "slug": d["slug"],
+                "path": d["outdir_rel"],
+                "title": f"{d['genre'].replace('_',' ').title()} · {d['country'].upper()}",
+                "primary": d["primary"]} for d in ds]
+    outdir = getattr(args, "outdir", "site") or "site"
+    entries, failed = [], []
+
+    for d in ds:
+        try:
+            view = None
+            if not d["history"]:
+                path = _view_path(d)
+                if os.path.exists(path):
+                    with open(path) as fh:
+                        view = json.load(fh)
+                else:
+                    view = _fetch_snapshot(d)
+            conn = store.connect(d["db_path"]) if d["history"] else None
+            try:
+                sub = os.path.join(outdir, d["outdir_rel"])
+                res = staticgen.build(conn, d, sub, view=view, datasets=listing)
+                if d["primary"]:
+                    # Keep the legacy root paths alive for the deployed Worker.
+                    staticgen.build(conn, d, outdir, view=view, datasets=listing)
+                meta = next(x for x in listing if x["slug"] == d["slug"])
+                v = view if view is not None else viewdata.build(conn, d)
+                entries.append(dict(meta, captured_at=v["captured_at"],
+                                    tracked=v["stats"]["tracked"],
+                                    top3=[i["name"] for i in v["items"][:3]]))
+                print(f"  {d['slug']:26} {res['chart_rows']:>3} rows -> {sub}")
+            finally:
+                if conn:
+                    conn.close()
+        except Exception as exc:
+            failed.append(d["slug"])
+            print(f"  {d['slug']:26} FAILED: {exc}", file=sys.stderr)
+
+    if len(entries) > 1:
+        # With a single dataset the root stays the dashboard itself; a listing
+        # page holding one card would be a step backwards.
+        staticgen.build_index(entries, outdir)
+        print(f"  index -> {outdir}/index.html ({len(entries)} datasets)")
+    elif entries:
+        staticgen.write_manifest(entries, outdir)
+    return 1 if failed else 0
+
+
+def _cmd_export_single(args, cfg):
     conn = store.connect()
     if args.prune:
         print("pruned:", store.prune(conn))

@@ -69,10 +69,55 @@ function route(text) {
       "nothing to trigger by hand. The timestamp on the dashboard shows how current " +
       "it is.") };
   }
-  return { inline: message(`:question: Unknown option \`${t}\`.\n\n${HELP_TEXT}`) };
+  // Echo the token back so the user can see their typo, but strip it to plain
+  // word characters first: it is untrusted input heading into a Slack message.
+  const shown = t.replace(/[^a-z0-9 _-]/gi, "").slice(0, 24) || "(unrecognised)";
+  return { inline: message(`:question: Unknown option \`${shown}\`.\n\n${HELP_TEXT}`) };
 }
 
 const SHARE_KINDS = new Set(["movers", "new", "chart"]);
+
+// Only datasets listed in the DATASETS var can be reached. The token is matched
+// against this list and the URL is built from the MATCHED ENTRY, never from the
+// user's string, so nothing a caller types can steer the fetch.
+function allowedDatasets(env) {
+  return String(env.DATASETS || "")
+    .split(",").map(s => s.trim()).filter(Boolean);
+}
+
+const COUNTRY_RE = /^[a-z]{2}$/;
+const GENRE_RE = /^[a-z_]{2,20}$/;
+
+/**
+ * Pull a country/genre pair out of the command's words, in any order.
+ * Returns {dataset, rest} where dataset is "" for the primary chart.
+ */
+function pickDataset(words, env) {
+    const allow = allowedDatasets(env);
+    if (!allow.length) return { dataset: "", rest: words, error: null };
+
+    const countries = new Set(allow.map(d => d.split("/")[0]));
+    const genres = new Set(allow.map(d => d.split("/")[1]));
+    let country = "", genre = "";
+    const rest = [];
+    for (const w of words) {
+      if (!country && COUNTRY_RE.test(w) && countries.has(w)) { country = w; continue; }
+      if (!genre && GENRE_RE.test(w) && genres.has(w)) { genre = w; continue; }
+      rest.push(w);
+    }
+    if (!country && !genre) return { dataset: "", rest, error: null };
+
+    const primary = allow[0].split("/");
+    const want = `${country || primary[0]}/${genre || primary[1]}`;
+    const match = allow.find(d => d === want);
+    if (!match) {
+      return { dataset: "", rest,
+        error: `No chart published for \`${want}\`. Available: ` +
+               allow.map(d => "`" + d + "`").join(", ") };
+    }
+    // The primary lives at the root path for backwards compatibility.
+    return { dataset: match === allow[0] ? "" : match, rest, error: null };
+}
 const SHARE_COOLDOWN = 60; // seconds between shares of the same kind
 
 function cors(env, extra = {}) {
@@ -100,22 +145,36 @@ async function handleShare(request, env) {
     return Response.json({ error: "Worker has no SLACK_WEBHOOK_URL secret set" },
       { status: 500, headers: cors(env) });
   }
-  let kind = "";
-  try { kind = (await request.json()).kind; } catch {}
+  let kind = "", dataset = "";
+  try {
+    const body = await request.json();
+    kind = body.kind;
+    dataset = String(body.dataset || "");
+  } catch {}
   if (!SHARE_KINDS.has(kind)) {
     return Response.json({ error: "unknown share kind" },
       { status: 400, headers: cors(env) });
   }
+  if (dataset) {
+    // Same rule as the slash command: only a published dataset is reachable,
+    // and the path is built from the matched entry.
+    const match = allowedDatasets(env).find(d => d === dataset);
+    if (!match) {
+      return Response.json({ error: "unknown dataset" },
+        { status: 400, headers: cors(env) });
+    }
+    dataset = match === allowedDatasets(env)[0] ? "" : match;
+  }
 
   const cache = caches.default;
-  const marker = new Request(`https://share.local/${kind}`);
+  const marker = new Request(`https://share.local/${dataset}/${kind}`);
   if (await cache.match(marker)) {
     return Response.json(
       { error: `Already shared ${kind} in the last ${SHARE_COOLDOWN}s` },
       { status: 429, headers: cors(env) });
   }
 
-  const src = `${env.PAGES_BASE.replace(/\/$/, "")}/slack/share-${kind}.json`;
+  const src = `${env.PAGES_BASE.replace(/\/$/, "")}${dataset ? "/" + dataset : ""}/slack/share-${kind}.json`;
   let payload;
   try {
     const res = await fetch(src, { cf: { cacheTtl: 60 } });
@@ -170,12 +229,17 @@ export default {
     }
 
     const form = new URLSearchParams(body);
-    const target = route(form.get("text"));
+    const words = (form.get("text") || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const picked = pickDataset(words, env);
+    if (picked.error) return Response.json(message(picked.error));
+    const target = route(picked.rest.join(" "));
     if (target.inline) {
       return Response.json(target.inline);
     }
 
-    const url = `${env.PAGES_BASE.replace(/\/$/, "")}/slack/${target.file}.json`;
+    const prefix = picked.dataset ? `/${picked.dataset}` : "";
+    const url =
+      `${env.PAGES_BASE.replace(/\/$/, "")}${prefix}/slack/${target.file}.json`;
     let payload;
     try {
       const upstream = await fetch(url, { cf: { cacheTtl: 300, cacheEverything: true } });

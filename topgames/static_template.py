@@ -38,6 +38,10 @@ a{color:inherit;text-decoration:none}
 .tabs button:hover{color:var(--ink)}
 .tabs button.on{background:var(--mint);color:#06210f}
 .spacer{flex:1}
+.dspick{font:inherit;font-size:12px;background:var(--bg);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:7px 10px;cursor:pointer;
+  max-width:190px}
+.dspick:hover{border-color:var(--faint)}
 .sync{font-family:var(--mono);font-size:11.5px;color:var(--faint);
   letter-spacing:.03em;display:flex;align-items:center;gap:7px;white-space:nowrap}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--up);
@@ -230,6 +234,7 @@ a.g-name:hover,a.co-link:hover{color:var(--mint)}
 BODY = r"""
 <header class="topbar">
   <div class="brand">TOP<i>/</i>GAMES <span>__SCOPE__</span></div>
+  <select class="dspick" id="dspick" aria-label="Chart"></select>
   <nav class="tabs" id="tabs">
     <button data-tab="top" class="on">Top 100</button>
     <button data-tab="new">New releases</button>
@@ -273,6 +278,9 @@ const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1, perPage:10,
             q:'', publisher:'all', minRating:0, released:'any' };
 
 /* The delta column can only describe the span the database actually covers. */
+/* Chart-only datasets carry no rank history, so every movement affordance is
+   suppressed rather than rendered as a column of dashes. */
+const HAS_HISTORY = D.history !== false;
 const spanLabel = D.span_days >= 7 ? 'Δ 7D'
                 : D.span_days >= 1 ? `Δ ${D.span_days}D`
                 : 'Δ TODAY';
@@ -523,7 +531,7 @@ function renderControls(){
         <option value="90">Last 90 days</option><option value="365">Last year</option>
       </select></div>
     <div class="seg">
-      ${['table','grid','timeline'].map(v =>
+      ${(HAS_HISTORY ? ['table','grid','timeline'] : ['table','grid']).map(v =>
         `<button data-view="${v}" class="${S.view===v?'on':''}">${v}</button>`).join('')}
     </div>
     <div class="search"><input id="f-q" type="search" value="${esc(S.q)}"
@@ -551,13 +559,13 @@ const TH = (key,label,extra='') => {
 function tableFor(rows){
   return `<div class="panel"><div class="scroll"><table>
     <thead><tr>
-      ${TH('rank','#')}${TH('delta',spanLabel)}${TH('name','Game')}
+      ${TH('rank','#')}${HAS_HISTORY ? TH('delta',spanLabel) : ''}${TH('name','Game')}
       ${TH('artist','Company')}${TH('rating','Rating')}${TH('ratings','Ratings')}
-      ${TH('released','Released')}<th>Rank trend</th>
+      ${TH('released','Released')}${HAS_HISTORY ? '<th>Rank trend</th>' : ''}
     </tr></thead><tbody>
     ${rows.map(r => `<tr>
       <td class="c-rank">${String(r.rank).padStart(2,'0')}</td>
-      <td class="c-d">${deltaCell(r.delta, r.is_new_entry)}</td>
+      ${HAS_HISTORY ? `<td class="c-d">${deltaCell(r.delta, r.is_new_entry)}</td>` : ''}
       <td><div class="game">
         <a href="${esc(r.url)}" target="_blank" rel="noopener">
           <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
@@ -574,7 +582,7 @@ function tableFor(rows){
         <div class="bar"><i style="width:${(r.rating/5*100).toFixed(1)}%"></i></div></td>
       <td class="num">${num(r.ratings)}</td>
       <td class="num dim">${esc(r.released)}</td>
-      <td>${spark(r.history)}</td>
+      ${HAS_HISTORY ? `<td>${spark(r.history)}</td>` : ''}
     </tr>`).join('')}
     </tbody></table></div></div>`;
 }
@@ -834,6 +842,27 @@ $('#csv').onclick = () => {
             : `${Math.floor(mins/1440)}d ago`;
   el.textContent = `${hhmm} (${ago})`;
   el.title = `${t.toLocaleString()} · ${zone}\nUTC: ${D.captured_at}`;
+})();
+
+/* Datasets are separate pages, so switching is a navigation rather than a
+   fetch — each page only ever carries its own payload. */
+(function datasetPicker(){
+  const el = document.getElementById('dspick');
+  if (!el) return;
+  const list = D.datasets || [];
+  if (list.length < 2){ el.style.display = 'none'; return; }
+  el.innerHTML = list.map(d =>
+    `<option value="${d.path}" ${d.slug === D.slug ? 'selected' : ''}>${d.title}</option>`
+  ).join('');
+  el.onchange = () => { location.href = (D.root || '') + el.value + '/'; };
+})();
+
+/* A chart-only dataset has no history, so movement UI would be dead weight. */
+(function hideMovementUI(){
+  if (D.history !== false) return;
+  const t = document.querySelector('#tabs button[data-tab="movers"]');
+  if (t) t.remove();
+  document.body.classList.add('no-history');
 })();
 
 renderTicker();

@@ -89,7 +89,10 @@ def refresh(conn, cfg, verbose=True):
     for err in errors:
         log(f"  warning: search term failed -- {err}")
 
-    novel = [r for r in fresh if store.is_first_time(conn, r["app_id"])]
+    # On a baseline run every swept app is first-time, so emitting these would
+    # report the entire back catalogue as brand new.
+    novel = [] if is_baseline else [
+        r for r in fresh if store.is_first_time(conn, r["app_id"])]
     store.upsert_apps(conn, list(all_found.values()))
     for rec in novel:
         events.append({
