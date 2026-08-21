@@ -269,6 +269,8 @@ def cmd_export(args, cfg):
     ds = config.datasets(cfg)
     listing = [{"country": d["country"], "genre": d["genre"], "slug": d["slug"],
                 "path": d["outdir_rel"],
+                "country_name": staticgen.COUNTRY_NAMES.get(
+                    d["country"], d["country"].upper()),
                 "title": f"{d['genre'].replace('_',' ').title()} · {d['country'].upper()}",
                 "primary": d["primary"]} for d in ds]
     outdir = getattr(args, "outdir", "site") or "site"

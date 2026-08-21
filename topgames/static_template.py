@@ -488,13 +488,21 @@ function renderTicker(){
 
 function renderHero(){
   const t = { top:['Top 100 free', D.stats.tracked + ' titles · ' + D.stats.publishers + ' publishers'],
-              new:['New releases', 'Released in the last ' + D.new_days + ' days'],
+              new:['New releases', S.relAge === 'all'
+                     ? ((RELEASES[S.relCountry] || []).length + ' games tracked in this store')
+                     : ('Released in the last ' + (S.relAge || D.new_days) + ' days')],
               movers:['Biggest movers', 'Ranked by size of rank change'],
               publishers:['Publishers', 'Grouped by company across the chart'],
               digest:['Slack digest', 'What lands in your channel'] }[S.tab];
-  $('#title').innerHTML = `${esc(D.genre)}, ${esc(D.country_name)} <span class="thin">— ${t[0]}</span>`;
-  $('#lede').textContent =
-    `Ranked from the iTunes RSS chart, enriched with the Lookup API. ${t[1]}.`;
+  // The releases tab has its own store selector, so the heading follows that
+  // rather than the chart's country, which is a different thing entirely.
+  const showing = S.tab === 'new' && S.relCountry
+    ? countryLabel(S.relCountry) : D.country_name;
+  $('#title').innerHTML =
+    `${esc(D.genre)}, ${esc(showing)} <span class="thin">— ${t[0]}</span>`;
+  $('#lede').textContent = S.tab === 'new'
+    ? `Discovered by sweeping the Search API. ${t[1]}.`
+    : `Ranked from the iTunes RSS chart, enriched with the Lookup API. ${t[1]}.`;
   const f = D.stats;
   $('#figures').innerHTML = [
     ['', f.tracked, 'Tracked'],
@@ -512,6 +520,12 @@ function renderHero(){
 /** "role_playing" -> "Role Playing" */
 function titleCase(v){
   return String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/** "jp" -> "Japan", falling back to the uppercased code. */
+function countryLabel(code){
+  const named = (D.datasets || []).find(d => d.country === code);
+  return (named && named.country_name) || String(code).toUpperCase();
 }
 
 function datasetMap(){
@@ -741,7 +755,7 @@ function publishersView(){
       <td class="num">${p.avg_rating.toFixed(2)}</td>
       <td class="num">${num(p.ratings_total)}</td>
       <td>${deltaCell(p.net_delta, false)}</td>
-    </tr>`).join('')}</tbody></table></div></div>` + releasePager(rows.length, pages, first);
+    </tr>`).join('')}</tbody></table></div></div>`;
 }
 
 function releasePager(total, pages, first){
@@ -775,7 +789,7 @@ function chartRank(r){
 let CHART_INDEX = null;
 
 async function loadReleases(country){
-  if (RELEASES[country]) { renderBody(); return; }
+  if (RELEASES[country]) { renderBody(); renderHero(); return; }
   RELEASES_LOADING = true; renderBody();
   try {
     const res = await fetch(new URL(`releases/${country}.json`, SITE_ROOT),
@@ -790,7 +804,8 @@ async function loadReleases(country){
     // Only the genre default is re-derived: clearing the country here
     // would bounce the view straight back to the chart's own store.
     S.relGenre = null;
-    renderBody();
+      renderBody();
+      renderHero();
   }
 }
 
@@ -899,7 +914,8 @@ function newReleasesView(){
       <td class="num dim">${esc(r.released)}</td>
       <td>${chartRank(r) ? `<span class="d up">#${chartRank(r)}</span>`
                    : '<span class="d flat">—</span>'}</td>
-    </tr>`).join('')}</tbody></table></div></div>`;
+    </tr>`).join('')}</tbody></table></div></div>`
+    + releasePager(rows.length, pages, first);
 }
 
 function digestView(){
@@ -943,8 +959,10 @@ function renderBody(){
     }
     el.innerHTML = `<div class="copybar">
         <button class="btn solid" id="shareslack">Share to Slack</button>
-        <span style="color:var(--faint);font-size:12px">Posts all
-          ${D.new_releases.length} releases, charting ones tagged.</span>
+        <span style="color:var(--faint);font-size:12px">Posts the
+          ${(D.new_releases || []).length} recent ${esc(D.genre)} releases for
+          ${esc(D.country.toUpperCase())} — the chart above, not the store
+          selected here.</span>
       </div>` + newReleasesView();
     foot.innerHTML = `<div>${D.new_releases.length} releases in the last ${D.new_days} days</div>`;
     const sb = el.querySelector('#shareslack');
@@ -964,7 +982,7 @@ function renderBody(){
     });
     const ra = el.querySelector('#f-relage');
     if (ra) ra.onchange = e => { S.relAge = e.target.value; S.relGenre = null;
-                                 S.relPage = 1; renderBody(); };
+                                 S.relPage = 1; renderBody(); renderHero(); };
     const rg = el.querySelector('#f-relgenre');
     if (rg) rg.onchange = e => { S.relGenre = e.target.value; S.relPage = 1;
                                  renderBody(); };

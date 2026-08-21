@@ -14,7 +14,9 @@ from .static_template import BODY, SCRIPT, STYLE
 
 COUNTRY_NAMES = {"us": "United States", "gb": "United Kingdom", "de": "Germany",
                  "fr": "France", "jp": "Japan", "tr": "Türkiye", "ca": "Canada",
-                 "au": "Australia", "kr": "South Korea", "cn": "China"}
+                 "au": "Australia", "kr": "South Korea", "cn": "China",
+                 "br": "Brazil", "es": "Spain", "it": "Italy", "nl": "Netherlands",
+                 "mx": "Mexico", "in": "India", "ru": "Russia", "pl": "Poland"}
 
 PAGE = """<!doctype html>
 <html lang="en"><head>
