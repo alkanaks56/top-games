@@ -229,3 +229,46 @@ dashboard stays fully available on `127.0.0.1`, which is the only place it shoul
 
 Set `web.expose_dashboard: true` to opt out — but note the `/api` routes have no authentication
 of their own, so this genuinely does publish them.
+
+---
+
+## Checking the data yourself
+
+`verify.py` diffs a published chart against Apple's own web chart:
+
+```bash
+python3 verify.py us puzzle
+```
+
+```bash
+python3 verify.py tr strategy
+```
+
+It reports two different things, because they mean different things:
+
+* **membership** — are the same apps present? A missing app is a real bug.
+* **position** — are they in the same order? Charts reshuffle through the day, and
+  our snapshot is fixed while Apple's page is live, so a few positions moving is
+  normal drift, not an error.
+
+Apple renders roughly the first 25 positions server-side and lazy-loads the rest, so
+that is as deep as an automated check can go. To eyeball a chart by hand:
+
+```
+https://apps.apple.com/<country>/charts/iphone/<genre>-games/<genre_id>
+```
+
+e.g. <https://apps.apple.com/us/charts/iphone/puzzle-games/7012>. The genre ids are in
+`topgames/config.py`.
+
+### New releases are a sample, not a census
+
+The chart is exact — it comes straight from Apple's ranked feed. **New releases are
+not.** Apple publishes no endpoint that lists every new release: the RSS
+"newapplications" feed ignores its genre parameter and returns stale data, so this
+project discovers releases by sweeping the Search API across a set of terms.
+
+Search is relevance-ranked, so a brand-new game with no ratings often does not
+surface at all. Expect the release list to be a useful sample of what is launching,
+not a complete registry — the real number of new iOS games per month is in the
+thousands, and no free Apple endpoint enumerates them.
