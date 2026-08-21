@@ -30,6 +30,36 @@ __BODY__
 """
 
 
+def _check_script(html):
+    """Refuse to publish a page whose script will not parse.
+
+    A duplicate declaration once shipped a completely blank dashboard: the
+    markup was fine and every string check passed, but the script threw on load.
+    node is present on the runner, so the parse is free.
+    """
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        return
+    match = re.search(r"<script>(.*?)</script>", html, re.S)
+    if not match:
+        return
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(match.group(1))
+        tmp = fh.name
+    try:
+        proc = subprocess.run([node, "--check", tmp], capture_output=True, text=True)
+    finally:
+        os.unlink(tmp)
+    if proc.returncode != 0:
+        raise RuntimeError("generated page has a script error:\n"
+                           + (proc.stderr or "").strip()[:600])
+
+
 def _write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
@@ -88,6 +118,7 @@ def build(conn, cfg, outdir="site", view=None, datasets=None):
                      json.dumps(data, default=str)))
             .replace("__TITLE__", title))
 
+    _check_script(html)
     _write(os.path.join(outdir, "index.html"), html)
     # Tells GitHub Pages to publish files and folders beginning with an underscore.
     _write(os.path.join(outdir, ".nojekyll"), "")

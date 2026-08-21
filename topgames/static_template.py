@@ -342,20 +342,20 @@ async function shareToSlack(kind, btn){
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
-    const body = {kind};
+    const payload = {kind};
     if (kind === 'new') {
       // Post what is on screen, not a prebuilt list: the Worker rebuilds the
       // message from these three values against the published pool.
-      body.filters = {store: S.relCountry, genre: S.relGenre || 'all',
+      payload.filters = {store: S.relCountry, genre: S.relGenre || 'all',
                       age: S.relAge || String(D.new_days)};
     }
     const res = await fetch(D.worker_url.replace(/\/$/, '') + '/share', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-    toast(body.message || 'Sent to Slack');
+    const reply = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(reply.error || `HTTP ${res.status}`);
+    toast(reply.message || 'Sent to Slack');
   } catch (err) {
     toast(`Could not send: ${err.message}`);
   } finally {
