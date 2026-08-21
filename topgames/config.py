@@ -16,6 +16,10 @@ GENRES = {
     "strategy": 7017, "trivia": 7018, "word": 7019,
 }
 
+# 6014 is Games; 70xx are its subgenres. Anything outside this set is an app
+# category (Entertainment, Books, Utilities) that the search sweep dragged in.
+GAME_GENRE_IDS = {6014} | set(range(7001, 7020))
+
 # Apple returns genre NAMES localised to the storefront ("パズル", "Quebra-cabeça")
 # but genre IDS are the same everywhere. Everything user-facing is derived from
 # the id so a filter written in English still works in Japan.

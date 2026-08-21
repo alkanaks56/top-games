@@ -6,6 +6,9 @@ import statistics
 from datetime import datetime, timedelta, timezone
 
 from . import store
+from .config import GENRE_NAMES, GAME_GENRE_IDS
+
+GAME_GENRES = {GENRE_NAMES[g] for g in GAME_GENRE_IDS if g in GENRE_NAMES}
 
 HISTORY_POINTS = 12
 
@@ -154,6 +157,9 @@ def build(conn, cfg):
         released = _parse(r["release_date"])
         if released and (now - released).days < 0:
             continue  # unreleased pre-order
+        genres = [g for g in (r["genres"] or "").split(",") if g]
+        if not any(g in GAME_GENRES for g in genres):
+            continue  # an app the sweep turned up, not a game
         new_releases.append({
             "app_id": r["app_id"], "name": r["name"],
             "artist": r["artist"] or "Unknown", "url": r["url"] or "",
@@ -164,8 +170,7 @@ def build(conn, cfg):
             "released": (r["release_date"] or "")[:10],
             "days_old": (now - released).days if released else None,
             "rank": charted.get(r["app_id"]),
-            "genres": [g for g in (r["genres"] or "").split(",")
-                       if g and g != "Games"],
+            "genres": [g for g in genres if g != "Games"],
         })
 
     return {

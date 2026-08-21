@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from .config import GENRE_NAMES
+from .config import GAME_GENRE_IDS, GENRE_NAMES
 
 RSS = "https://itunes.apple.com/{country}/rss/{chart}/limit={limit}/genre={genre}/json"
 SEARCH = "https://itunes.apple.com/search"
@@ -122,6 +122,27 @@ def canonical_genres(raw):
     return named or list(raw.get("genres") or [])
 
 
+def game_genres(raw):
+    """Only the game categories, or [] if this is not a game at all.
+
+    The sweep searches the whole store, so it turns up book apps and ASMR
+    players alongside games. Their categories have no business in a game
+    genre filter.
+    """
+    ids = []
+    for gid in raw.get("genreIds") or []:
+        try:
+            ids.append(int(gid))
+        except (TypeError, ValueError):
+            continue
+    return [GENRE_NAMES[g] for g in ids
+            if g in GAME_GENRE_IDS and g in GENRE_NAMES]
+
+
+def is_game(raw):
+    return bool(game_genres(raw))
+
+
 def normalize(raw):
     """Flatten an iTunes record into the shape we store."""
     app_id = raw.get("trackId")
@@ -137,7 +158,8 @@ def normalize(raw):
         "price": float(raw.get("price") or 0.0),
         "formatted_price": raw.get("formattedPrice") or "",
         # Built from ids, not from the storefront's localised names.
-        "genres": ",".join(canonical_genres(raw)),
+        "genres": ",".join(game_genres(raw) or canonical_genres(raw)),
+        "is_game": is_game(raw),
         "primary_genre": raw.get("primaryGenreName") or "",
         "content_rating": raw.get("contentAdvisoryRating") or "",
         "release_date": raw.get("releaseDate") or "",

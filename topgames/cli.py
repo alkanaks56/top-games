@@ -66,6 +66,9 @@ def sweep_releases(cfg, country, primary):
         # game that has not launched is not a new release.
         if age < 0:
             continue
+        # The sweep searches the whole store; only games belong in a game tracker.
+        if not r.get("is_game", True):
+            continue
         r["days_old"] = age
         rows.append({
             "app_id": r["app_id"], "name": r["name"], "artist": r["artist"],
