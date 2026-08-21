@@ -769,7 +769,9 @@ async function loadReleases(country){
     toast(`No release data for ${country.toUpperCase()}: ${err.message}`);
   } finally {
     RELEASES_LOADING = false;
-    S.relGenre = null; S.relCountry = null; CHART_INDEX = null;
+    // Only the genre default is re-derived: clearing the country here
+    // would bounce the view straight back to the chart's own store.
+    S.relGenre = null;
     renderBody();
   }
 }
@@ -782,9 +784,35 @@ function releaseGenres(){
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
+/** The Store and Genre controls, rendered during loading as well as after. */
+function releasePicker(loading){
+  const uniqCountries = [...new Set((D.datasets || []).map(d => d.country))].sort();
+  const pool = RELEASES[S.relCountry] || [];
+  const total = pool.length;
+  return `<div class="controls">
+    ${uniqCountries.length > 1 ? `
+    <div class="ctl ${S.relCountry !== D.country.toLowerCase() ? 'active' : ''}">
+      <label>Store</label>
+      <select id="f-relcountry" ${loading ? 'disabled' : ''}>${uniqCountries.map(c =>
+        `<option value="${esc(c)}" ${c === S.relCountry ? 'selected' : ''}
+          >${esc(c.toUpperCase())}</option>`).join('')}</select></div>` : ''}
+    <div class="ctl ${S.relGenre && S.relGenre !== 'all' ? 'active' : ''}"><label>Genre</label>
+      <select id="f-relgenre" ${loading ? 'disabled' : ''}>
+        <option value="all" ${S.relGenre === 'all' ? 'selected' : ''}
+          >All genres (${total})</option>
+        ${releaseGenres().map(([g, n]) =>
+          `<option value="${esc(g)}" ${S.relGenre === g ? 'selected' : ''}
+            >${esc(g)} (${n})</option>`).join('')}
+      </select></div>
+    <div class="search"><input id="f-relq" type="search" value="${esc(S.q)}"
+      ${loading ? 'disabled' : ''} placeholder="Search title or company…"></div>
+    </div>`;
+}
+
 function newReleasesView(){
   if (RELEASES_LOADING)
-    return `<div class="panel"><div class="empty">Loading releases…</div></div>`;
+    return releasePicker(true) + `<div class="panel"><div class="empty">
+      <span class="spin"></span>Loading releases…</div></div>`;
   // Releases are storefront-specific, so the pool is fetched per country rather
   // than inlined for every chart.
   let rows = RELEASES[S.relCountry] || D.new_releases || [];
@@ -798,26 +826,7 @@ function newReleasesView(){
     const q = S.q.toLowerCase();
     rows = rows.filter(r => (r.name + ' ' + r.artist).toLowerCase().includes(q));
   }
-  const countries = (D.datasets || []).map(d => d.country);
-  const uniqCountries = [...new Set(countries)].sort();
-  const picker = `<div class="controls">
-    ${uniqCountries.length > 1 ? `
-    <div class="ctl ${S.relCountry !== D.country.toLowerCase() ? 'active' : ''}">
-      <label>Store</label>
-      <select id="f-relcountry">${uniqCountries.map(c =>
-        `<option value="${esc(c)}" ${c === S.relCountry ? 'selected' : ''}
-          >${esc(c.toUpperCase())}</option>`).join('')}</select></div>` : ''}
-    <div class="ctl ${S.relGenre !== 'all' ? 'active' : ''}"><label>Genre</label>
-      <select id="f-relgenre">
-        <option value="all" ${S.relGenre === 'all' ? 'selected' : ''}
-          >All genres (${total})</option>
-        ${releaseGenres().map(([g, n]) =>
-          `<option value="${esc(g)}" ${S.relGenre === g ? 'selected' : ''}
-            >${esc(g)} (${n})</option>`).join('')}
-      </select></div>
-    <div class="search"><input id="f-relq" type="search" value="${esc(S.q)}"
-      placeholder="Search title or company…"></div>
-    </div>`;
+  const picker = releasePicker(false);
   if (!rows.length)
     return picker + `<div class="panel"><div class="empty">
       Nothing released in the last ${D.new_days} days matches that filter.</div></div>`;
