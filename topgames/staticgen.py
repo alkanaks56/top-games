@@ -161,6 +161,12 @@ def build_index(entries, outdir="site"):
     return {"datasets": len(entries)}
 
 
+def write_releases(country, rows, outdir="site"):
+    """Publish one storefront's release pool for the dashboard to fetch."""
+    _write(os.path.join(outdir, "releases", f"{country}.json"),
+           json.dumps(rows, default=str))
+
+
 def write_manifest(entries, outdir="site"):
     _write(os.path.join(outdir, "manifest.json"),
            json.dumps(entries, indent=1, default=str))

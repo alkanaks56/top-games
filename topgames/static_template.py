@@ -267,6 +267,10 @@ BODY = r"""
 
 SCRIPT = r"""
 let D = __DATA__;
+
+/* Resolved once at load: switching datasets rewrites the address bar, which
+   would otherwise re-base every later relative fetch onto the new path. */
+const SITE_ROOT = new URL(D.root || './', location.href).href;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -274,7 +278,7 @@ const num = n => (n || 0).toLocaleString('en-US');
 const PAGE_SIZES = [10, 50, 100];
 
 const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1, perPage:10,
-            q:'', publisher:'all', minRating:0, released:'any', relGenre:null };
+            q:'', publisher:'all', minRating:0, released:'any', relGenre:null, relCountry:null };
 
 /* The delta column can only describe the span the database actually covers. */
 /* Chart-only datasets carry no rank history, so every movement affordance is
@@ -548,7 +552,7 @@ async function switchDataset(country, genre){
 
   SWITCHING = true; renderControls();
   try {
-    const res = await fetch(`${D.root || ''}${target.path}/data/chart.json`,
+    const res = await fetch(new URL(`${target.path}/data/chart.json`, SITE_ROOT),
                             {cache: 'no-cache'});
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const next = await res.json();
@@ -556,14 +560,14 @@ async function switchDataset(country, genre){
     next.root = D.root;
     next.datasets = D.datasets;
     D = next;
-    S.page = 1; S.publisher = 'all'; S.q = ''; S.relGenre = null;
+    S.page = 1; S.publisher = 'all'; S.q = ''; S.relGenre = null; S.relCountry = null; CHART_INDEX = null;
     if (!HAS_HISTORY_NOW() && S.tab === 'movers') S.tab = 'top';
     if (!HAS_HISTORY_NOW() && S.view === 'timeline') S.view = 'table';
     syncTabs();
     renderTicker();
     render();
     localiseSync();
-    history.replaceState(null, '', `${D.root || ''}${target.path}/`);
+    history.replaceState(null, '', new URL(`${target.path}/`, SITE_ROOT));
     toast(`Showing ${target.title}`);
   } catch (err) {
     toast(`Could not load that chart: ${err.message}`);
@@ -582,7 +586,11 @@ function syncTabs(){
 }
 
 function renderControls(){
-  if (S.tab === 'digest' || S.tab === 'publishers'){ $('#controls').innerHTML=''; return; }
+  // New Releases carries its own Store and Genre controls, so the chart's
+  // filters are suppressed there rather than shown twice.
+  if (S.tab === 'digest' || S.tab === 'publishers' || S.tab === 'new'){
+    $('#controls').innerHTML = ''; return;
+  }
   const pubs = [...new Set(D.items.map(i => i.artist))].sort();
   const sortActive = S.sort !== 'rank' || S.dir !== 1;
   $('#controls').innerHTML = `
@@ -731,16 +739,50 @@ function publishersView(){
     </tr>`).join('')}</tbody></table></div></div>`;
 }
 
+
+const RELEASES = {};
+let RELEASES_LOADING = false;
+
+/** Rank of a release in the chart currently on screen, if it is in it. */
+function chartRank(r){
+  if (!CHART_INDEX) CHART_INDEX = new Map(
+    (D.items || []).map(i => [i.app_id, i.rank]));
+  return CHART_INDEX.get(r.app_id) || null;
+}
+let CHART_INDEX = null;
+
+async function loadReleases(country){
+  if (RELEASES[country]) { renderBody(); return; }
+  RELEASES_LOADING = true; renderBody();
+  try {
+    const res = await fetch(new URL(`releases/${country}.json`, SITE_ROOT),
+                            {cache: 'no-cache'});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    RELEASES[country] = await res.json();
+  } catch (err) {
+    RELEASES[country] = [];
+    toast(`No release data for ${country.toUpperCase()}: ${err.message}`);
+  } finally {
+    RELEASES_LOADING = false;
+    S.relGenre = null; S.relCountry = null; CHART_INDEX = null;
+    renderBody();
+  }
+}
+
 function releaseGenres(){
   const counts = new Map();
-  for (const r of (D.new_releases || []))
+  for (const r of (RELEASES[S.relCountry] || D.new_releases || []))
     for (const g of (r.genres || []))
       counts.set(g, (counts.get(g) || 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
 function newReleasesView(){
-  let rows = D.new_releases || [];
+  if (RELEASES_LOADING)
+    return `<div class="panel"><div class="empty">Loading releases…</div></div>`;
+  // Releases are storefront-specific, so the pool is fetched per country rather
+  // than inlined for every chart.
+  let rows = RELEASES[S.relCountry] || D.new_releases || [];
   const total = rows.length;
   // The sweep collects every genre it turns up; this narrows the view without
   // narrowing the data, so the tracked genre is a default rather than a cage.
@@ -751,7 +793,15 @@ function newReleasesView(){
     const q = S.q.toLowerCase();
     rows = rows.filter(r => (r.name + ' ' + r.artist).toLowerCase().includes(q));
   }
+  const countries = (D.datasets || []).map(d => d.country);
+  const uniqCountries = [...new Set(countries)].sort();
   const picker = `<div class="controls">
+    ${uniqCountries.length > 1 ? `
+    <div class="ctl ${S.relCountry !== D.country.toLowerCase() ? 'active' : ''}">
+      <label>Store</label>
+      <select id="f-relcountry">${uniqCountries.map(c =>
+        `<option value="${esc(c)}" ${c === S.relCountry ? 'selected' : ''}
+          >${esc(c.toUpperCase())}</option>`).join('')}</select></div>` : ''}
     <div class="ctl ${S.relGenre !== 'all' ? 'active' : ''}"><label>Genre</label>
       <select id="f-relgenre">
         <option value="all" ${S.relGenre === 'all' ? 'selected' : ''}
@@ -771,7 +821,7 @@ function newReleasesView(){
         ? `Every release the sweep found in the last ${D.new_days} days`
         : `<b>${esc(S.relGenre)}</b> releases from the last ${D.new_days} days`
     } — <b>${shown}</b> games${(() => {
-      const c = rows.filter(r => r.rank).length;
+      const c = rows.filter(r => chartRank(r)).length;
       return c ? `, of which <b>${c}</b> ${c === 1 ? 'has' : 'have'} reached the top ${D.stats.tracked}` : '';
     })()}.</div>
     <div class="panel"><div class="scroll"><table>
@@ -784,14 +834,14 @@ function newReleasesView(){
           <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
         <div><a class="g-name" href="${esc(r.url)}" target="_blank"
              rel="noopener">${esc(r.name)}</a>${
-             r.rank ? `<span class="tag top100">top 100</span>` : ''}
+             chartRank(r) ? `<span class="tag top100">top 100</span>` : ''}
           <div class="g-sub">${esc(r.genre)}</div></div></div></td>
       <td><div class="co">${companyLink(r)}</div></td>
       <td class="g-sub">${esc((r.genres || []).slice(0, 2).join(' / ') || '—')}</td>
       <td class="rating"><span class="star">★</span>${r.rating ? r.rating.toFixed(2) : '—'}</td>
       <td class="num">${num(r.ratings)}</td>
       <td class="num dim">${esc(r.released)}</td>
-      <td>${r.rank ? `<span class="d up">#${r.rank}</span>`
+      <td>${chartRank(r) ? `<span class="d up">#${chartRank(r)}</span>`
                    : '<span class="d flat">—</span>'}</td>
     </tr>`).join('')}</tbody></table></div></div>`;
 }
@@ -824,6 +874,11 @@ function renderBody(){
     return;
   }
   if (S.tab === 'new'){
+    if (S.relCountry === null){
+      S.relCountry = D.country.toLowerCase();
+      loadReleases(S.relCountry);
+      return;
+    }
     if (S.relGenre === null){
       // Default to the chart's own genre; the pool itself stays unfiltered.
       const g = D.genre.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -837,6 +892,9 @@ function renderBody(){
     foot.innerHTML = `<div>${D.new_releases.length} releases in the last ${D.new_days} days</div>`;
     const sb = el.querySelector('#shareslack');
     sb.onclick = () => shareToSlack('new', sb);
+    const rc = el.querySelector('#f-relcountry');
+    if (rc) rc.onchange = e => { S.relCountry = e.target.value;
+                                 loadReleases(S.relCountry); };
     const rg = el.querySelector('#f-relgenre');
     if (rg) rg.onchange = e => { S.relGenre = e.target.value; renderBody(); };
     const rq = el.querySelector('#f-relq');

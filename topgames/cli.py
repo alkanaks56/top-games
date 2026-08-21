@@ -26,6 +26,48 @@ def cmd_init(args, cfg):
     return 0
 
 
+def _releases_path(country):
+    return os.path.join(config.ROOT, "data", f"releases-{country}.json")
+
+
+def sweep_releases(cfg, country, primary):
+    """Discover recent releases in one storefront.
+
+    Availability and ratings are storefront-specific, so each country needs its
+    own sweep. Only the primary gets the full genre vocabulary; the rest use the
+    generic discovery terms, since the pool is shown cross-genre anyway.
+    """
+    terms = list(cfg.get("discovery_terms") or [])
+    if primary:
+        terms = list(cfg.get("search_terms") or []) + terms
+    _fresh, found, errors = sources.sweep_new_releases(
+        terms, country, None,
+        within_days=cfg["signals"]["new_release_days"], genre_name=None)
+
+    rows = []
+    for r in found.values():
+        if r.get("days_old") is None:
+            released = sources._parse_dt(r["release_date"])
+            if not released:
+                continue
+            age = (datetime.now(timezone.utc) - released).days
+            if age > cfg["signals"]["new_release_days"]:
+                continue
+            r["days_old"] = age
+        rows.append({
+            "app_id": r["app_id"], "name": r["name"], "artist": r["artist"],
+            "url": r["url"], "artist_url": r.get("artist_url", ""),
+            "icon": r["icon"], "rating": round(r["avg_rating"] or 0, 2),
+            "ratings": r["rating_count"] or 0,
+            "released": (r["release_date"] or "")[:10],
+            "days_old": r["days_old"],
+            "genres": [g for g in (r["genres"] or "").split(",")
+                       if g and g != "Games"],
+        })
+    rows.sort(key=lambda r: r["released"], reverse=True)
+    return rows, errors
+
+
 def _view_path(d):
     return os.path.join(config.ROOT, "data", f"{d['slug']}.view.json")
 
@@ -65,6 +107,22 @@ def cmd_refresh(args, cfg):
     """Refresh every configured dataset, isolating failures."""
     ds = config.datasets(cfg)
     failed = []
+
+    # One release sweep per storefront, shared by that country's charts.
+    if cfg.get("sweep_countries", True):
+        primary_country = config.primary(cfg)["country"]
+        for country in sorted({d["country"] for d in ds}):
+            try:
+                rows, errs = sweep_releases(cfg, country,
+                                            country == primary_country)
+                os.makedirs(os.path.dirname(_releases_path(country)), exist_ok=True)
+                with open(_releases_path(country), "w") as fh:
+                    json.dump(rows, fh, default=str)
+                print(f"  releases {country:20} {len(rows):>3} found"
+                      + (f" ({len(errs)} term errors)" if errs else ""))
+            except Exception as exc:
+                failed.append((f"releases-{country}", exc))
+                print(f"  releases {country:20} FAILED: {exc}", file=sys.stderr)
     for d in ds:
         tag = f"{d['slug']}{' (chart only)' if not d['history'] else ''}"
         try:
@@ -209,6 +267,12 @@ def cmd_export(args, cfg):
         except Exception as exc:
             failed.append(d["slug"])
             print(f"  {d['slug']:26} FAILED: {exc}", file=sys.stderr)
+
+    for country in sorted({d["country"] for d in ds}):
+        src = _releases_path(country)
+        if os.path.exists(src):
+            with open(src) as fh:
+                staticgen.write_releases(country, json.load(fh), outdir)
 
     if entries:
         # No landing page: the root IS the primary dashboard, and country and

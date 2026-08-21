@@ -23,12 +23,20 @@ DEFAULTS = {
     # the Slack digest); the rest are chart-only, fetched fresh each run and
     # stored nowhere, which is why they cost 2 requests instead of 17.
     # Add an entry here and to worker/wrangler.toml's DATASETS to publish more.
-    "datasets": [
-        {"country": "us", "genre": "puzzle", "primary": True, "history": True},
-        {"country": "tr", "genre": "puzzle"},
-        {"country": "us", "genre": "strategy"},
-        {"country": "gb", "genre": "word"},
+    # Charts are the cross product of these. Each costs 2 requests and ~3.4s.
+    "countries": ["us", "gb", "de", "tr", "jp", "br"],
+    # Every Apple games genre, so the dashboard's genre filter is a real
+    # browser rather than a shortlist. Each adds 2 requests per country.
+    # Every Apple games genre that actually publishes a chart. Dice (7007) and
+    # Educational (7008) are omitted: their feeds return zero entries in every
+    # storefront, so they would only ever appear as failures.
+    "genres_tracked": [
+        "games", "action", "adventure", "board", "card", "casino", "casual",
+        "family", "music", "puzzle", "racing", "role_playing", "simulation",
+        "sports", "strategy", "trivia", "word",
     ],
+    # Explicit entries override the cross product entirely.
+    "datasets": [],
     "chart": "topfreeapplications",
     "chart_size": 100,
     "slack": {
@@ -83,6 +91,10 @@ DEFAULTS = {
         "game", "games", "arcade", "adventure", "racing", "strategy",
         "simulator", "idle", "tycoon", "card game", "board game", "rpg",
     ],
+    # Countries other than the primary are swept with the discovery terms only:
+    # the pool is cross-genre anyway, and a full sweep per storefront would
+    # triple the request count.
+    "sweep_countries": True,
     "search_terms": [
         "puzzle", "jigsaw", "sudoku", "match 3", "block puzzle", "word puzzle",
         "brain", "escape room", "merge", "tile", "crossword", "logic",
@@ -164,8 +176,17 @@ def datasets(cfg):
     """
     raw = cfg.get("datasets") or []
     if not raw:
-        raw = [{"country": cfg["country"], "genre": cfg["genre"],
-                "primary": True, "history": True}]
+        countries = cfg.get("countries") or [cfg["country"]]
+        genres_t = cfg.get("genres_tracked") or [cfg["genre"]]
+        raw = [{"country": c, "genre": g,
+                # Only the configured primary keeps history; the rest are
+                # chart-only, which is what makes the cross product affordable.
+                "primary": c == cfg["country"] and g == cfg["genre"],
+                "history": c == cfg["country"] and g == cfg["genre"]}
+               for c in countries for g in genres_t]
+        if not any(d["primary"] for d in raw):
+            raw.insert(0, {"country": cfg["country"], "genre": cfg["genre"],
+                           "primary": True, "history": True})
 
     out, seen_primary = [], False
     for entry in raw:
