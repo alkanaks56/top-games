@@ -61,7 +61,11 @@ jobs:
       - name: Build static site and Slack payloads
         run: python -m topgames export --outdir site --prune
 
+      # Publishing must not depend on the bookkeeping commit succeeding: a push
+      # race with a human commit used to fail the job before Pages deployed,
+      # taking the whole site update down over a database checkpoint.
       - name: Commit refreshed database
+        continue-on-error: true
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -70,10 +74,24 @@ jobs:
           # every run would look like a first run and detect no movement at all.
           if git diff --staged --quiet; then
             echo "No database changes to commit."
-          else
-            git commit -m "chore: refresh chart data [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "chore: refresh chart data [skip ci]"
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected; rebasing onto the remote and retrying."
+            git fetch origin main
+            # Ours wins for the database: this run holds the newest snapshot.
+            git -c rebase.autoStash=true rebase -X ours origin/main || {
+              git rebase --abort || true
+              echo "Could not rebase; leaving the checkpoint for the next run."
+              exit 0
+            }
+          done
+          echo "Push still failing after 3 attempts; the next run will retry."
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

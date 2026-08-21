@@ -88,13 +88,22 @@ DEFAULTS = {
     # the discovery pool inherits the genre's vocabulary and the "all genres"
     # view has almost nothing extra in it.
     "discovery_terms": [
-        "game", "games", "arcade", "adventure", "racing", "strategy",
-        "simulator", "idle", "tycoon", "card game", "board game", "rpg",
+        # Mechanics and themes rather than genre names: the Search API ranks by
+        # relevance, so broad vocabulary is what widens the discovery pool.
+        "game", "games", "3d", "online", "multiplayer", "offline", "fun",
+        "arcade", "adventure", "racing", "strategy", "simulator", "idle",
+        "tycoon", "card game", "board game", "rpg", "shooter", "battle", "war",
+        "fight", "ninja", "zombie", "survival", "sniper", "quest", "story",
+        "horror", "mystery", "car", "drift", "bike", "moto", "drive", "soccer",
+        "football", "basketball", "golf", "tennis", "pool", "bowling", "farm",
+        "city", "cooking", "restaurant", "salon", "doctor", "runner", "jump",
+        "dash", "relaxing", "kids", "baby", "coloring", "drawing", "learn",
+        "math", "pixel", "retro", "anime", "cute", "pet", "dragon", "magic",
+        "tower", "defense", "craft", "build", "sort", "stack", "draw", "paint",
+        "clicker", "casino", "slots", "poker", "bingo", "chess", "quiz",
+        "trivia", "mahjong", "solitaire", "bubble", "candy", "jelly", "farm 3d",
+        "simulation", "clash", "hero", "legend", "empire", "kingdom",
     ],
-    # Countries other than the primary are swept with the discovery terms only:
-    # the pool is cross-genre anyway, and a full sweep per storefront would
-    # triple the request count.
-    "sweep_countries": True,
     "search_terms": [
         "puzzle", "jigsaw", "sudoku", "match 3", "block puzzle", "word puzzle",
         "brain", "escape room", "merge", "tile", "crossword", "logic",

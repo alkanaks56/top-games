@@ -37,23 +37,21 @@ def sweep_releases(cfg, country, primary):
     own sweep. Only the primary gets the full genre vocabulary; the rest use the
     generic discovery terms, since the pool is shown cross-genre anyway.
     """
-    terms = list(cfg.get("discovery_terms") or [])
-    if primary:
-        terms = list(cfg.get("search_terms") or []) + terms
+    terms = list(cfg.get("search_terms") or []) + list(
+        cfg.get("discovery_terms") or [])
+    # No date cut-off here: the dashboard offers an age filter over the whole
+    # pool, so trimming to 30 days at fetch time would throw away the very
+    # thing that filter exists to show.
     _fresh, found, errors = sources.sweep_new_releases(
-        terms, country, None,
-        within_days=cfg["signals"]["new_release_days"], genre_name=None)
+        terms, country, None, within_days=36500, genre_name=None)
 
+    now = datetime.now(timezone.utc)
     rows = []
     for r in found.values():
-        if r.get("days_old") is None:
-            released = sources._parse_dt(r["release_date"])
-            if not released:
-                continue
-            age = (datetime.now(timezone.utc) - released).days
-            if age > cfg["signals"]["new_release_days"]:
-                continue
-            r["days_old"] = age
+        released = sources._parse_dt(r["release_date"])
+        if not released:
+            continue
+        r["days_old"] = (now - released).days
         rows.append({
             "app_id": r["app_id"], "name": r["name"], "artist": r["artist"],
             "url": r["url"], "artist_url": r.get("artist_url", ""),
@@ -64,8 +62,11 @@ def sweep_releases(cfg, country, primary):
             "genres": [g for g in (r["genres"] or "").split(",")
                        if g and g != "Games"],
         })
+    # Newest first, then capped: the tail is years old and only inflates the
+    # file the browser has to pull down.
     rows.sort(key=lambda r: r["released"], reverse=True)
-    return rows, errors
+    cap = int(cfg.get("release_pool_size", 3000))
+    return rows[:cap], errors
 
 
 def _view_path(d):
@@ -118,7 +119,11 @@ def cmd_refresh(args, cfg):
                 os.makedirs(os.path.dirname(_releases_path(country)), exist_ok=True)
                 with open(_releases_path(country), "w") as fh:
                     json.dump(rows, fh, default=str)
-                print(f"  releases {country:20} {len(rows):>3} found"
+                recent = sum(1 for r in rows
+                             if (r["days_old"] or 9999)
+                             <= cfg["signals"]["new_release_days"])
+                print(f"  releases {country:20} {len(rows):>5} pooled, "
+                      f"{recent} in the last {cfg['signals']['new_release_days']}d"
                       + (f" ({len(errs)} term errors)" if errs else ""))
             except Exception as exc:
                 failed.append((f"releases-{country}", exc))

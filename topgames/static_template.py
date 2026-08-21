@@ -278,7 +278,7 @@ const num = n => (n || 0).toLocaleString('en-US');
 const PAGE_SIZES = [10, 50, 100];
 
 const S = { tab:'top', view:'table', sort:'rank', dir:1, page:1, perPage:10,
-            q:'', publisher:'all', minRating:0, released:'any', relGenre:null, relCountry:null };
+            q:'', publisher:'all', minRating:0, released:'any', relGenre:null, relCountry:null, relAge:null, relPage:1 };
 
 /* The delta column can only describe the span the database actually covers. */
 /* Chart-only datasets carry no rank history, so every movement affordance is
@@ -741,7 +741,25 @@ function publishersView(){
       <td class="num">${p.avg_rating.toFixed(2)}</td>
       <td class="num">${num(p.ratings_total)}</td>
       <td>${deltaCell(p.net_delta, false)}</td>
-    </tr>`).join('')}</tbody></table></div></div>`;
+    </tr>`).join('')}</tbody></table></div></div>` + releasePager(rows.length, pages, first);
+}
+
+function releasePager(total, pages, first){
+  const last = Math.min(first + S.perPage, total);
+  const sizes = PAGE_SIZES.map(n =>
+    `<button class="${S.perPage === n ? 'on' : ''}" data-relsize="${n}">${n}</button>`).join('');
+  const nums = Array.from({length: pages}, (_, i) => i + 1)
+    .filter(p => p === 1 || p === pages || Math.abs(p - S.relPage) <= 1)
+    .map((p, i, a) => (i && p - a[i-1] > 1 ? '<span>…</span>' : '') +
+      `<button class="${p === S.relPage ? 'on' : ''}" data-relp="${p}">${p}</button>`).join('');
+  return `<div class="tfoot">
+    <div>Showing ${first + 1}–${last} of ${total}
+      <span class="rows">Rows ${sizes}</span></div>
+    <div class="pager">
+      <button ${S.relPage === 1 ? 'disabled' : ''} data-relp="${S.relPage - 1}">← prev</button>
+      ${nums}
+      <button ${S.relPage === pages ? 'disabled' : ''} data-relp="${S.relPage + 1}">next →</button>
+    </div></div>`;
 }
 
 
@@ -778,17 +796,24 @@ async function loadReleases(country){
 
 function releaseGenres(){
   const counts = new Map();
-  for (const r of (RELEASES[S.relCountry] || D.new_releases || []))
+  for (const r of agedPool())
     for (const g of (r.genres || []))
       counts.set(g, (counts.get(g) || 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
 /** The Store and Genre controls, rendered during loading as well as after. */
+/** The pool for the selected store, narrowed to the selected age. */
+function agedPool(){
+  const pool = RELEASES[S.relCountry] || [];
+  if (S.relAge === 'all') return pool;
+  const max = Number(S.relAge);
+  return pool.filter(r => (r.days_old ?? 1e9) <= max);
+}
+
 function releasePicker(loading){
   const uniqCountries = [...new Set((D.datasets || []).map(d => d.country))].sort();
-  const pool = RELEASES[S.relCountry] || [];
-  const total = pool.length;
+  const total = agedPool().length;
   return `<div class="controls">
     ${uniqCountries.length > 1 ? `
     <div class="ctl ${S.relCountry !== D.country.toLowerCase() ? 'active' : ''}">
@@ -796,6 +821,15 @@ function releasePicker(loading){
       <select id="f-relcountry" ${loading ? 'disabled' : ''}>${uniqCountries.map(c =>
         `<option value="${esc(c)}" ${c === S.relCountry ? 'selected' : ''}
           >${esc(c.toUpperCase())}</option>`).join('')}</select></div>` : ''}
+    <div class="ctl ${S.relAge !== String(D.new_days) ? 'active' : ''}">
+      <label>Released</label>
+      <select id="f-relage" ${loading ? 'disabled' : ''}>
+        <option value="${D.new_days}" ${S.relAge === String(D.new_days) ? 'selected' : ''}
+          >Last ${D.new_days} days</option>
+        <option value="90"   ${S.relAge === '90'   ? 'selected' : ''}>Last 90 days</option>
+        <option value="365"  ${S.relAge === '365'  ? 'selected' : ''}>Last year</option>
+        <option value="all"  ${S.relAge === 'all'  ? 'selected' : ''}>Any time</option>
+      </select></div>
     <div class="ctl ${S.relGenre && S.relGenre !== 'all' ? 'active' : ''}"><label>Genre</label>
       <select id="f-relgenre" ${loading ? 'disabled' : ''}>
         <option value="all" ${S.relGenre === 'all' ? 'selected' : ''}
@@ -815,7 +849,7 @@ function newReleasesView(){
       <span class="spin"></span>Loading releases…</div></div>`;
   // Releases are storefront-specific, so the pool is fetched per country rather
   // than inlined for every chart.
-  let rows = RELEASES[S.relCountry] || D.new_releases || [];
+  let rows = agedPool();
   const total = rows.length;
   // The sweep collects every genre it turns up; this narrows the view without
   // narrowing the data, so the tracked genre is a default rather than a cage.
@@ -829,11 +863,19 @@ function newReleasesView(){
   const picker = releasePicker(false);
   if (!rows.length)
     return picker + `<div class="panel"><div class="empty">
-      Nothing released in the last ${D.new_days} days matches that filter.</div></div>`;
+      Nothing matches that filter.</div></div>`;
+
+  const pages = Math.max(1, Math.ceil(rows.length / S.perPage));
+  S.relPage = Math.min(Math.max(1, S.relPage), pages);
+  const first = (S.relPage - 1) * S.perPage;
+  const page = rows.slice(first, first + S.perPage);
   return picker + `<div class="note">${
       S.relGenre === 'all'
-        ? `Every release the sweep found in the last ${D.new_days} days`
-        : `<b>${esc(S.relGenre)}</b> releases from the last ${D.new_days} days`
+        ? (S.relAge === 'all'
+            ? 'Every game the sweep has found in this store'
+            : `Every release the sweep found in the last ${S.relAge} days`)
+        : `<b>${esc(S.relGenre)}</b> ${S.relAge === 'all'
+             ? 'games in this store' : `from the last ${S.relAge} days`}`
     } — <b>${shown}</b> games${(() => {
       const c = rows.filter(r => chartRank(r)).length;
       return c ? `, of which <b>${c}</b> ${c === 1 ? 'has' : 'have'} reached the top ${D.stats.tracked}` : '';
@@ -841,7 +883,7 @@ function newReleasesView(){
     <div class="panel"><div class="scroll"><table>
     <thead><tr><th>Age</th><th>Game</th><th>Company</th><th>Genre</th>
       <th>Rating</th><th>Ratings</th><th>Released</th><th>Chart</th></tr></thead><tbody>
-    ${rows.map(r => `<tr>
+    ${page.map(r => `<tr>
       <td class="c-rank">${r.days_old ?? '—'}d</td>
       <td><div class="game">
         <a href="${esc(r.url)}" target="_blank" rel="noopener">
@@ -888,6 +930,7 @@ function renderBody(){
     return;
   }
   if (S.tab === 'new'){
+    if (S.relAge === null) S.relAge = String(D.new_days);
     if (S.relCountry === null){
       S.relCountry = D.country.toLowerCase();
       loadReleases(S.relCountry);
@@ -907,12 +950,26 @@ function renderBody(){
     const sb = el.querySelector('#shareslack');
     sb.onclick = () => shareToSlack('new', sb);
     const rc = el.querySelector('#f-relcountry');
-    if (rc) rc.onchange = e => { S.relCountry = e.target.value;
+    if (rc) rc.onchange = e => { S.relCountry = e.target.value; S.relPage = 1;
                                  loadReleases(S.relCountry); };
+    el.querySelectorAll('[data-relp]').forEach(b => b.onclick = () => {
+      S.relPage = Number(b.dataset.relp); renderBody();
+      window.scrollTo({top: 0, behavior: 'smooth'});
+    });
+    el.querySelectorAll('[data-relsize]').forEach(b => b.onclick = () => {
+      const anchor = (S.relPage - 1) * S.perPage;
+      S.perPage = Number(b.dataset.relsize);
+      S.relPage = Math.floor(anchor / S.perPage) + 1;
+      renderBody();
+    });
+    const ra = el.querySelector('#f-relage');
+    if (ra) ra.onchange = e => { S.relAge = e.target.value; S.relGenre = null;
+                                 S.relPage = 1; renderBody(); };
     const rg = el.querySelector('#f-relgenre');
-    if (rg) rg.onchange = e => { S.relGenre = e.target.value; renderBody(); };
+    if (rg) rg.onchange = e => { S.relGenre = e.target.value; S.relPage = 1;
+                                 renderBody(); };
     const rq = el.querySelector('#f-relq');
-    if (rq) rq.oninput = e => { S.q = e.target.value; renderBody(); };
+    if (rq) rq.oninput = e => { S.q = e.target.value; S.relPage = 1; renderBody(); };
     return;
   }
 
