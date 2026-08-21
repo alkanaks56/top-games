@@ -24,7 +24,7 @@ LOOKUP_BATCH = 100  # Verified: the lookup endpoint returns all 100 ids in one c
 # Requests are network-bound and Apple serves this volume comfortably: a
 # 107-term sweep ran at ~46 req/min with zero errors. Concurrency is what
 # removes the wall-clock cost, not shorter sleeps.
-WORKERS = 4
+WORKERS = 6
 
 
 class SourceError(RuntimeError):
@@ -42,7 +42,7 @@ def fetch_all(urls, timeout=30, workers=WORKERS):
         return list(pool.map(one, urls))
 
 
-def _get_json(url, timeout=30, retries=4):
+def _get_json(url, timeout=30, retries=3):
     last = None
     for attempt in range(retries):
         try:
@@ -55,7 +55,7 @@ def _get_json(url, timeout=30, retries=4):
                 # A 403 here is throttling, not a permanent refusal, and it
                 # needs a longer pause than an ordinary network blip.
                 throttled = getattr(exc, "code", None) == 403
-                time.sleep((4.0 if throttled else 1.5) * (attempt + 1))
+                time.sleep((2.0 if throttled else 1.0) * (attempt + 1))
     raise SourceError(f"request failed after {retries} tries: {url} ({last})")
 
 

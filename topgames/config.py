@@ -104,6 +104,17 @@ DEFAULTS = {
         "trivia", "mahjong", "solitaire", "bubble", "candy", "jelly", "farm 3d",
         "simulation", "clash", "hero", "legend", "empire", "kingdom",
     ],
+    # Non-primary storefronts sweep this subset rather than all 92 terms. The
+    # long tail mostly rediscovers the same apps, and those storefronts throttle
+    # hard enough that the extra terms cost minutes for very little.
+    "discovery_terms_short": [
+        "game", "games", "arcade", "puzzle", "action", "adventure", "racing",
+        "strategy", "simulator", "idle", "rpg", "card", "board", "casino",
+        "sports", "kids", "shooter", "battle", "farm", "match",
+    ],
+    "sweep_countries": True,
+    # Upper bound on releases published per storefront, newest first.
+    "release_pool_size": 3000,
     "search_terms": [
         "puzzle", "jigsaw", "sudoku", "match 3", "block puzzle", "word puzzle",
         "brain", "escape room", "merge", "tile", "crossword", "logic",

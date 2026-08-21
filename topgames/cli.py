@@ -38,8 +38,12 @@ def sweep_releases(cfg, country, primary):
     own sweep. Only the primary gets the full genre vocabulary; the rest use the
     generic discovery terms, since the pool is shown cross-genre anyway.
     """
-    terms = list(cfg.get("search_terms") or []) + list(
-        cfg.get("discovery_terms") or [])
+    if primary:
+        terms = list(cfg.get("search_terms") or []) + list(
+            cfg.get("discovery_terms") or [])
+    else:
+        terms = list(cfg.get("discovery_terms_short")
+                     or cfg.get("discovery_terms") or [])
     # No date cut-off here: the dashboard offers an age filter over the whole
     # pool, so trimming to 30 days at fetch time would throw away the very
     # thing that filter exists to show.
