@@ -16,6 +16,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from .config import GENRE_NAMES
+
 RSS = "https://itunes.apple.com/{country}/rss/{chart}/limit={limit}/genre={genre}/json"
 SEARCH = "https://itunes.apple.com/search"
 LOOKUP = "https://itunes.apple.com/lookup"
@@ -103,6 +105,23 @@ def lookup(app_ids, country="us"):
     return found
 
 
+def canonical_genres(raw):
+    """Storefront-independent genre names for a record.
+
+    `genres` comes back localised per storefront, so matching on it silently
+    fails outside English markets. `genreIds` is stable, so names are mapped
+    from those and only fall back to the localised strings if an id is unknown.
+    """
+    ids = []
+    for gid in raw.get("genreIds") or []:
+        try:
+            ids.append(int(gid))
+        except (TypeError, ValueError):
+            continue
+    named = [GENRE_NAMES[g] for g in ids if g in GENRE_NAMES]
+    return named or list(raw.get("genres") or [])
+
+
 def normalize(raw):
     """Flatten an iTunes record into the shape we store."""
     app_id = raw.get("trackId")
@@ -117,7 +136,8 @@ def normalize(raw):
         "icon": raw.get("artworkUrl100") or "",
         "price": float(raw.get("price") or 0.0),
         "formatted_price": raw.get("formattedPrice") or "",
-        "genres": ",".join(raw.get("genres") or []),
+        # Built from ids, not from the storefront's localised names.
+        "genres": ",".join(canonical_genres(raw)),
         "primary_genre": raw.get("primaryGenreName") or "",
         "content_rating": raw.get("contentAdvisoryRating") or "",
         "release_date": raw.get("releaseDate") or "",

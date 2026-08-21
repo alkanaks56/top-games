@@ -42,8 +42,12 @@ def sweep_releases(cfg, country, primary):
         terms = list(cfg.get("search_terms") or []) + list(
             cfg.get("discovery_terms") or [])
     else:
-        terms = list(cfg.get("discovery_terms_short")
-                     or cfg.get("discovery_terms") or [])
+        # The genre terms come along: without them a secondary storefront never
+        # searches "sudoku" or "nonogram", so the genre it is tracked for is the
+        # one it discovers worst.
+        terms = list(cfg.get("search_terms") or []) + list(
+            cfg.get("discovery_terms_short")
+            or cfg.get("discovery_terms") or [])
     # No date cut-off here: the dashboard offers an age filter over the whole
     # pool, so trimming to 30 days at fetch time would throw away the very
     # thing that filter exists to show.
@@ -56,7 +60,13 @@ def sweep_releases(cfg, country, primary):
         released = sources._parse_dt(r["release_date"])
         if not released:
             continue
-        r["days_old"] = (now - released).days
+        age = (now - released).days
+        # Apple lists pre-orders with a future release date, which produced
+        # entries like "-86d" sorting above everything actually released. A
+        # game that has not launched is not a new release.
+        if age < 0:
+            continue
+        r["days_old"] = age
         rows.append({
             "app_id": r["app_id"], "name": r["name"], "artist": r["artist"],
             "url": r["url"], "artist_url": r.get("artist_url", ""),

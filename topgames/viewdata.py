@@ -152,6 +152,8 @@ def build(conn, cfg):
     new_releases = []
     for r in fresh_rows:
         released = _parse(r["release_date"])
+        if released and (now - released).days < 0:
+            continue  # unreleased pre-order
         new_releases.append({
             "app_id": r["app_id"], "name": r["name"],
             "artist": r["artist"] or "Unknown", "url": r["url"] or "",

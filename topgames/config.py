@@ -16,6 +16,26 @@ GENRES = {
     "strategy": 7017, "trivia": 7018, "word": 7019,
 }
 
+# Apple returns genre NAMES localised to the storefront ("パズル", "Quebra-cabeça")
+# but genre IDS are the same everywhere. Everything user-facing is derived from
+# the id so a filter written in English still works in Japan.
+GENRE_NAMES = {
+    6000: "Business", 6001: "Weather", 6002: "Utilities", 6003: "Travel",
+    6004: "Sports", 6005: "Social Networking", 6006: "Reference",
+    6007: "Productivity", 6008: "Photo & Video", 6009: "News",
+    6010: "Navigation", 6011: "Music", 6012: "Lifestyle",
+    6013: "Health & Fitness", 6014: "Games", 6015: "Finance",
+    6016: "Entertainment", 6017: "Education", 6018: "Books", 6020: "Medical",
+    6021: "Magazines & Newspapers", 6023: "Food & Drink", 6024: "Shopping",
+    6027: "Graphics & Design",
+    7001: "Action", 7002: "Adventure", 7003: "Casual", 7004: "Board",
+    7005: "Card", 7006: "Casino", 7007: "Dice", 7008: "Educational",
+    7009: "Family", 7011: "Music", 7012: "Puzzle", 7013: "Racing",
+    7014: "Role Playing", 7015: "Simulation", 7016: "Sports",
+    7017: "Strategy", 7018: "Trivia", 7019: "Word",
+}
+
+
 DEFAULTS = {
     "country": "us",
     "genre": "puzzle",
@@ -24,7 +44,7 @@ DEFAULTS = {
     # stored nowhere, which is why they cost 2 requests instead of 17.
     # Add an entry here and to worker/wrangler.toml's DATASETS to publish more.
     # Charts are the cross product of these. Each costs 2 requests and ~3.4s.
-    "countries": ["us", "gb", "de", "tr", "jp", "br"],
+    "countries": ["us", "gb", "de", "tr", "br"],
     # Every Apple games genre, so the dashboard's genre filter is a real
     # browser rather than a shortlist. Each adds 2 requests per country.
     # Every Apple games genre that actually publishes a chart. Dice (7007) and
