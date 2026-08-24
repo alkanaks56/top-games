@@ -77,14 +77,15 @@ def chips(r):
 
 
 def _mover_line(m):
-    return (f"{delta_str(m['delta'])}  <{m['url']}|{m['name']}>"
+    return (f"{delta_str(m['delta'])}  <{m['url']}|{m['name']}>{_paren(m.get('play_url'))}"
             + (f"  → `#{m['rank']}`" if m.get("rank") else ""))
 
 
 def _top10_lines(rows):
     # The rank sits inside backticks so Slack renders it monospaced and the
     # column stays aligned; padding with plain spaces would be collapsed.
-    return [f"`{r['rank']:>2}` {delta_str(r['delta']):>3}  <{r['url']}|{r['name']}>  "
+    return [f"`{r['rank']:>2}` {delta_str(r['delta']):>3}  "
+            f"<{r['url']}|{r['name']}>{_paren(r.get('play_url'))}  "
             f"{r['rating']:.2f}★ · {r['artist']}" for r in rows]
 
 
@@ -111,11 +112,11 @@ def _newrel_line(r):
     rank = f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""
     # The App Store link is the title itself; Android hangs off the end,
     # since it is a search rather than a resolved page.
-    link = _android(r.get("play_url"), "▶ Android")
-    play = f"  ·  {link}" if link else ""
+
     return (f"{dot(r['rating'], r['ratings'])} *<{r['url']}|{r['name']}>*"
+            f"{_paren(r.get('play_url'))}"
             + (f"   {tag}" if tag else "") + rank
-            + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}{play}")
+            + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}")
 
 
 def _day_label(iso):

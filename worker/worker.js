@@ -185,8 +185,8 @@ async function buildFilteredReleases(env, filters) {
     const rating = r.ratings ? `${r.rating.toFixed(2)}★ (${r.ratings.toLocaleString("en-US")})`
                              : "no ratings yet";
     // & must be escaped inside a Slack link, and the Play URL carries one.
-    const play = r.play_url ? `  ·  <${r.play_url.replace(/&/g, "&amp;")}|▶ Android>` : "";
-    return `${dot} <${r.url}|${r.name}>  ${r.artist} · ${rating} · ${r.released}${play}`;
+    const play = r.play_url ? `(<${r.play_url.replace(/&/g, "&amp;")}|And>)` : "";
+    return `${dot} <${r.url}|${r.name}>${play}  ${r.artist} · ${rating} · ${r.released}`;
   });
 
   const blocks = [{ type: "section", text: { type: "mrkdwn",

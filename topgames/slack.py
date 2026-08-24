@@ -117,6 +117,15 @@ def _line(ev, chart_ranks=None):
     return f"{EMOJI.get(ev['kind'],'•')} {title} — {artist}\n     {tail}"
 
 
+def _play_paren(row):
+    """(And) -- a Google Play search beside the App Store link.
+
+    & has to be escaped inside a Slack link, and the search URL carries one.
+    """
+    url = row.get("play_url") if hasattr(row, "get") else None
+    return f"(<{url.replace('&', '&amp;')}|And>)" if url else ""
+
+
 def _section(text):
     return {"type": "section", "text": {"type": "mrkdwn", "text": text[:SLACK_TEXT_LIMIT]}}
 
@@ -292,7 +301,8 @@ def build_share(conn, cfg, kind):
             body = "_No rank movement recorded yet._"
         else:
             line = lambda m: (
-                f"{'▲' if m['delta'] > 0 else '▼'} <{m['url']}|{m['name']}> "
+                f"{'▲' if m['delta'] > 0 else '▼'} <{m['url']}|{m['name']}>"
+                f"{_play_paren(m)} "
                 f"{'up' if m['delta'] > 0 else 'down'} {abs(m['delta'])} — now #{m['rank']}")
             body = "\n".join([line(m) for m in up] + [line(m) for m in down])
         blocks = [_section(f"*Movers — {scope}*\n"
@@ -302,14 +312,9 @@ def build_share(conn, cfg, kind):
     elif kind == "new":
         rows = view["new_releases"]
         charted = sum(1 for r in rows if r["rank"])
-        # Google Play is a search rather than a resolved page, so it hangs off
-        # the end of the line; & has to be escaped inside a Slack link.
-        play = lambda r: (f"  ·  <{r['play_url'].replace('&', '&amp;')}|▶ Android>"
-                          if r.get("play_url") else "")
-        lines = [f"• <{r['url']}|{r['name']}> — {r['artist']} · "
+        lines = [f"• <{r['url']}|{r['name']}>{_play_paren(r)} — {r['artist']} · "
                  f"{(str(round(r['rating'],2)) + '★') if r['rating'] else 'no ratings yet'}"
                  f" · {r['released']}" + (f"  `TOP 100 #{r['rank']}`" if r["rank"] else "")
-                 + play(r)
                  for r in rows]
         head = (f"*New releases — {scope}*\n_{len(rows)} in the last "
                 f"{cfg['signals']['new_release_days']} days · {charted} in the top "
@@ -325,7 +330,8 @@ def build_share(conn, cfg, kind):
     else:  # current chart
         rows = view["items"][:25]
         body = "\n".join(
-            f"`{r['rank']:>2}` <{r['url']}|{r['name']}> — {r['artist']} · {r['rating']:.2f}★"
+            f"`{r['rank']:>2}` <{r['url']}|{r['name']}>{_play_paren(r)} — "
+            f"{r['artist']} · {r['rating']:.2f}★"
             for r in rows)
         blocks = [_section(f"*Top {len(rows)} — {scope}*\n\n{body}")]
         text = f"Top {len(rows)} {scope}"
