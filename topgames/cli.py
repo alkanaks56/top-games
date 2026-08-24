@@ -89,6 +89,38 @@ def sweep_releases(cfg, country, primary):
     return rows[:cap], errors
 
 
+def _merge_pool(country, rows, cfg):
+    """Fold a sweep into the pool already published, newest metadata winning.
+
+    Apple throttles hard from datacenter IPs: one CI run lost 101 of 107 search
+    terms and wrote back a pool of 944 rows with six recent releases, silently
+    replacing a good 3000-row pool. A sweep is a discovery sample, so a thin
+    one means "found less this time", never "these games ceased to exist" --
+    merging makes a throttled run harmless instead of destructive.
+    """
+    merged = {}
+    try:
+        with open(_releases_path(country)) as fh:
+            for r in json.load(fh):
+                merged[r["app_id"]] = r
+    except (OSError, ValueError, KeyError):
+        pass
+    for r in rows:                      # this run's metadata is the fresher one
+        merged[r["app_id"]] = r
+    # days_old was computed when the row was swept; carrying it forward would
+    # freeze a game's age at whatever it was the day we last saw it.
+    today = datetime.now(timezone.utc)
+    for r in merged.values():
+        released = sources._parse_dt(r.get("released"))
+        if released and released.tzinfo is None:
+            released = released.replace(tzinfo=timezone.utc)
+        if released:
+            r["days_old"] = (today - released).days
+    out = sorted(merged.values(), key=lambda r: r.get("released") or "",
+                 reverse=True)
+    return out[:int(cfg.get("release_pool_size", 3000))]
+
+
 def _view_path(d):
     return os.path.join(config.ROOT, "data", f"{d['slug']}.view.json")
 
@@ -136,6 +168,7 @@ def cmd_refresh(args, cfg):
             try:
                 rows, errs = sweep_releases(cfg, country,
                                             country == primary_country)
+                rows = _merge_pool(country, rows, cfg)
                 os.makedirs(os.path.dirname(_releases_path(country)), exist_ok=True)
                 with open(_releases_path(country), "w") as fh:
                     json.dump(rows, fh, default=str)
