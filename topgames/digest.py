@@ -113,7 +113,9 @@ def _newrel_line(r):
     # The App Store link is the title itself; Android hangs off the end,
     # since it is a search rather than a resolved page.
 
-    return (f"{dot(r['rating'], r['ratings'])} *<{r['url']}|{r['name']}>*"
+    # No bold on the name: Slack renders *<url|text>* literally, asterisks and
+    # all, and the link colour already sets the title apart from the line.
+    return (f"{dot(r['rating'], r['ratings'])} <{r['url']}|{r['name']}>"
             f"{_paren(r.get('play_url'))}"
             + (f"   {tag}" if tag else "") + rank
             + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}")
@@ -273,8 +275,10 @@ def publisher_blocks(items):
         return []
     lines = []
     for artist, rs in pubs[:PUBS_SHOWN]:
-        name = f"<{urls[artist]}|{artist}>" if urls.get(artist) else artist
-        lines.append(f"*{name}* — {len(rs)} games — "
+        # Bold only when it is not a link: *<url|text>* renders literally.
+        name = (f"<{urls[artist]}|{artist}>" if urls.get(artist)
+                else f"*{artist}*")
+        lines.append(f"{name} — {len(rs)} games — "
                      + ", ".join(f"#{n}" for n in rs))
     return [_section("*🏢 PUBLISHERS IN THE TOP 100*\n" + _quote(lines))]
 
