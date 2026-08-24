@@ -302,9 +302,14 @@ def build_share(conn, cfg, kind):
     elif kind == "new":
         rows = view["new_releases"]
         charted = sum(1 for r in rows if r["rank"])
+        # Google Play is a search rather than a resolved page, so it hangs off
+        # the end of the line; & has to be escaped inside a Slack link.
+        play = lambda r: (f"  ·  <{r['play_url'].replace('&', '&amp;')}|▶ Android>"
+                          if r.get("play_url") else "")
         lines = [f"• <{r['url']}|{r['name']}> — {r['artist']} · "
                  f"{(str(round(r['rating'],2)) + '★') if r['rating'] else 'no ratings yet'}"
                  f" · {r['released']}" + (f"  `TOP 100 #{r['rank']}`" if r["rank"] else "")
+                 + play(r)
                  for r in rows]
         head = (f"*New releases — {scope}*\n_{len(rows)} in the last "
                 f"{cfg['signals']['new_release_days']} days · {charted} in the top "

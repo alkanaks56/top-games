@@ -55,7 +55,8 @@ def connect(path=DB_PATH):
 def _migrate(conn):
     """Add columns introduced after a database was first created."""
     have = {r["name"] for r in conn.execute("PRAGMA table_info(apps)")}
-    for column, ddl in (("artist_url", "ALTER TABLE apps ADD COLUMN artist_url TEXT"),):
+    for column, ddl in (("artist_url", "ALTER TABLE apps ADD COLUMN artist_url TEXT"),
+                        ("bundle_id", "ALTER TABLE apps ADD COLUMN bundle_id TEXT")):
         if column not in have:
             conn.execute(ddl)
     conn.commit()
@@ -63,13 +64,13 @@ def _migrate(conn):
 
 # Columns a record may omit; filled in so adding a field cannot break callers.
 APP_COLUMNS = {
-    "app_id", "name", "artist", "url", "artist_url", "icon", "price",
+    "app_id", "name", "artist", "url", "artist_url", "bundle_id", "icon", "price",
     "formatted_price", "genres", "primary_genre", "content_rating",
     "release_date", "version_date", "avg_rating", "rating_count", "description",
 }
 
 APP_DEFAULTS = {
-    "artist": "", "url": "", "artist_url": "", "icon": "", "price": 0.0,
+    "artist": "", "url": "", "artist_url": "", "bundle_id": "", "icon": "", "price": 0.0,
     "formatted_price": "", "genres": "", "primary_genre": "", "content_rating": "",
     "release_date": "", "version_date": "", "avg_rating": 0.0, "rating_count": 0,
     "description": "",
@@ -83,15 +84,15 @@ def upsert_apps(conn, records):
         rec = {**APP_DEFAULTS, **rec}
         rec = {k: v for k, v in rec.items() if k in APP_COLUMNS}
         conn.execute("""
-            INSERT INTO apps (app_id, name, artist, url, artist_url, icon, price,
+            INSERT INTO apps (app_id, name, artist, url, artist_url, bundle_id, icon, price,
                 formatted_price, genres, primary_genre, content_rating, release_date,
                 version_date, avg_rating, rating_count, description, first_seen, last_seen)
-            VALUES (:app_id,:name,:artist,:url,:artist_url,:icon,:price,:formatted_price,
+            VALUES (:app_id,:name,:artist,:url,:artist_url,:bundle_id,:icon,:price,:formatted_price,
                 :genres,:primary_genre,:content_rating,:release_date,:version_date,
                 :avg_rating,:rating_count,:description,:ts,:ts)
             ON CONFLICT(app_id) DO UPDATE SET
                 name=excluded.name, artist=excluded.artist, url=excluded.url,
-                artist_url=excluded.artist_url,
+                artist_url=excluded.artist_url, bundle_id=excluded.bundle_id,
                 icon=excluded.icon, price=excluded.price,
                 formatted_price=excluded.formatted_price, genres=excluded.genres,
                 primary_genre=excluded.primary_genre,

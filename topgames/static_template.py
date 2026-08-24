@@ -159,6 +159,13 @@ tbody tr:hover{background:var(--row-hover)}
   padding:3px 9px;border-radius:5px;white-space:nowrap}
 a.g-name:hover,a.co-link:hover{color:var(--mint)}
 .co-link{cursor:pointer}
+/* Google Play is a search, not a resolved page, so it reads as a quiet
+   affordance beside the title rather than a second primary link. */
+.play{display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;margin-left:6px;border-radius:4px;vertical-align:-3px;
+  color:var(--dim);border:1px solid var(--line);background:var(--row-hover)}
+.play:hover{color:var(--mint);border-color:var(--mint)}
+.play svg{fill:currentColor;display:block}
 /* Publisher table: pin the figure columns so they cluster right instead of
    drifting apart across a wide screen. */
 .pub th:nth-child(1),.pub td:nth-child(1){width:56px}
@@ -288,6 +295,21 @@ function spanLabelNow(){
   return D.span_days >= 7 ? 'Δ 7D'
        : D.span_days >= 1 ? `Δ ${D.span_days}D`
        : 'Δ TODAY';
+}
+
+function playLink(r){
+  // Apple's bundle id is not Google's package name, so this can only be a
+  // search -- labelled as one rather than dressed up as a direct link. Pools
+  // published before bundle ids were stored fall back to the title.
+  const q = r.play_url ||
+    (r.name ? 'https://play.google.com/store/search?c=apps&q=' +
+              encodeURIComponent(r.name) : '');
+  if (!q) return '';
+  return `<a class="play" href="${esc(q)}" target="_blank" rel="noopener"
+     title="Search Google Play for ${esc(r.name)}" aria-label="Search Google Play">
+     <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path
+       d="M3 2.2v19.6c0 .6.7 1 1.2.6l14.3-9.8c.4-.3.4-1 0-1.3L4.2 1.6C3.7 1.2 3 1.6 3 2.2z"
+     /></svg></a>`;
 }
 
 function companyLink(r){
@@ -689,7 +711,7 @@ function tableFor(rows){
         <a href="${esc(r.url)}" target="_blank" rel="noopener">
           <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
         <div><a class="g-name" href="${esc(r.url)}" target="_blank"
-             rel="noopener">${esc(r.name)}</a>${
+             rel="noopener">${esc(r.name)}</a>${playLink(r)}${
             r.is_new_release ? '<span class="tag fresh">fresh</span>' : ''}
           <div class="g-sub">${esc(r.genre)}</div></div></div></td>
       <td><div class="co">${companyLink(r)}${
@@ -919,7 +941,7 @@ function newReleasesView(){
         <a href="${esc(r.url)}" target="_blank" rel="noopener">
           <img class="ico" loading="lazy" src="${esc(r.icon)}" alt=""></a>
         <div><a class="g-name" href="${esc(r.url)}" target="_blank"
-             rel="noopener">${esc(r.name)}</a>${
+             rel="noopener">${esc(r.name)}</a>${playLink(r)}${
              chartRank(r) ? `<span class="tag top100">top 100</span>` : ''}
           <div class="g-sub">${esc(r.genre)}</div></div></div></td>
       <td><div class="co">${companyLink(r)}</div></td>

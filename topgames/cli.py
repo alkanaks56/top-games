@@ -73,6 +73,8 @@ def sweep_releases(cfg, country, primary):
         rows.append({
             "app_id": r["app_id"], "name": r["name"], "artist": r["artist"],
             "url": r["url"], "artist_url": r.get("artist_url", ""),
+            "bundle_id": r.get("bundle_id", ""),
+            "play_url": viewdata.play_url(r.get("bundle_id"), r["name"]),
             "icon": r["icon"], "rating": round(r["avg_rating"] or 0, 2),
             "ratings": r["rating_count"] or 0,
             "released": (r["release_date"] or "")[:10],

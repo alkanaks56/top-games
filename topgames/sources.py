@@ -154,6 +154,9 @@ def normalize(raw):
         "artist": raw.get("artistName") or "",
         "url": raw.get("trackViewUrl") or "",
         "artist_url": raw.get("artistViewUrl") or "",
+        # com.company.game -- the closest thing to a cross-store identity, used
+        # to look the same title up on Google Play.
+        "bundle_id": raw.get("bundleId") or "",
         "icon": raw.get("artworkUrl100") or "",
         "price": float(raw.get("price") or 0.0),
         "formatted_price": raw.get("formattedPrice") or "",

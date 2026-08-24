@@ -91,9 +91,14 @@ def _top10_lines(rows):
 def _newrel_line(r):
     tag = chips(r)
     rank = f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""
+    # The App Store link is the title itself; Android hangs off the end,
+    # since it is a search rather than a resolved page.
+    # Slack wants & escaped inside a link, and the Play search URL has one.
+    play = (f"  ·  <{r['play_url'].replace('&', '&amp;')}|▶ Android>"
+            if r.get("play_url") else "")
     return (f"{dot(r['rating'], r['ratings'])} *<{r['url']}|{r['name']}>*"
             + (f"   {tag}" if tag else "") + rank
-            + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}")
+            + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}{play}")
 
 
 def _day_label(iso):

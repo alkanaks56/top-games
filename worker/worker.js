@@ -184,7 +184,10 @@ async function buildFilteredReleases(env, filters) {
     const dot = !r.ratings ? "⚪" : r.rating >= 4.7 ? "🟢" : r.rating >= 4.0 ? "🟡" : "🔴";
     const rating = r.ratings ? `${r.rating.toFixed(2)}★ (${r.ratings.toLocaleString("en-US")})`
                              : "no ratings yet";
-    return `${dot} <${r.url}|${r.name}>  ${r.artist} · ${rating} · ${r.released}`;
+    // Google Play is a search, not a resolved page; & must be escaped in a
+    // Slack link, and the Play search URL carries one.
+    const play = r.play_url ? `  ·  <${r.play_url.replace(/&/g, "&amp;")}|▶ Android>` : "";
+    return `${dot} <${r.url}|${r.name}>  ${r.artist} · ${rating} · ${r.released}${play}`;
   });
 
   const blocks = [{ type: "section", text: { type: "mrkdwn",

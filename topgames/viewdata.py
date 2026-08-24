@@ -3,6 +3,7 @@
 Kept apart from rendering so the numbers can be checked on their own.
 """
 import statistics
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 from . import store
@@ -11,6 +12,27 @@ from .config import GENRE_NAMES, GAME_GENRE_IDS
 GAME_GENRES = {GENRE_NAMES[g] for g in GAME_GENRE_IDS if g in GENRE_NAMES}
 
 HISTORY_POINTS = 12
+PLAY_SEARCH = "https://play.google.com/store/search?c=apps&q="
+
+
+def _bundle(row):
+    """sqlite3.Row has no .get, and the column is null until a refresh fills it."""
+    try:
+        return row["bundle_id"] or ""
+    except (IndexError, KeyError):
+        return ""
+
+
+def play_url(bundle_id, name=""):
+    """A Google Play search for the same title.
+
+    Apple's bundle id and Google's package name are separate namespaces, so
+    there is no id that resolves on both stores -- but publishers reuse the
+    reverse-domain string often enough that it is the best query available.
+    The app's name is the fallback when the bundle id is missing.
+    """
+    query = (bundle_id or "").strip() or (name or "").strip()
+    return PLAY_SEARCH + urllib.parse.quote(query) if query else ""
 
 
 def _parse(iso):
@@ -113,6 +135,8 @@ def build(conn, cfg):
             "prev_rank": prev,
             "history": history.get(r["app_id"], []),
             "artist_url": r.get("artist_url") or "",
+            "bundle_id": _bundle(r),
+            "play_url": play_url(_bundle(r), r["name"]),
             "titles_charting": publisher_counts.get(r["artist"], 1),
             "is_new_release": age_days is not None and age_days <= new_days,
             "is_new_entry": prev is None and bool(base_ranks),
@@ -164,6 +188,8 @@ def build(conn, cfg):
             "app_id": r["app_id"], "name": r["name"],
             "artist": r["artist"] or "Unknown", "url": r["url"] or "",
             "artist_url": r["artist_url"] or "", "icon": r["icon"] or "",
+            "bundle_id": _bundle(r),
+            "play_url": play_url(_bundle(r), r["name"]),
             "genre": _genre_label(r["genres"]),
             "rating": round(r["avg_rating"] or 0, 2),
             "ratings": r["rating_count"] or 0,
@@ -218,6 +244,8 @@ def build_snapshot(entries, meta, cfg):
             "rank": rank, "app_id": app_id, "name": r["name"],
             "artist": r["artist"] or "Unknown", "url": r["url"],
             "artist_url": r.get("artist_url") or "", "icon": r["icon"],
+            "bundle_id": _bundle(r),
+            "play_url": play_url(_bundle(r), r["name"]),
             "genre": _genre_label(r["genres"]),
             "rating": round(r["avg_rating"] or 0, 2),
             "ratings": r["rating_count"] or 0,
