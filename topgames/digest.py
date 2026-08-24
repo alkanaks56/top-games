@@ -88,14 +88,31 @@ def _top10_lines(rows):
             f"{r['rating']:.2f}★ · {r['artist']}" for r in rows]
 
 
+def _paren(url):
+    return f"({_android(url)})" if url else ""
+
+
+def _android(url, label="And"):
+    """Slack wants & escaped inside a link, and the Play URL carries one."""
+    return f"<{url.replace('&', '&amp;')}|{label}>" if url else ""
+
+
+def _play_for(e):
+    """Chart events carry the bundle id; releases arrive with the URL built."""
+    try:
+        bundle = e["bundle_id"]
+    except (IndexError, KeyError):
+        bundle = ""
+    return viewdata.play_url(bundle, e["name"])
+
+
 def _newrel_line(r):
     tag = chips(r)
     rank = f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""
     # The App Store link is the title itself; Android hangs off the end,
     # since it is a search rather than a resolved page.
-    # Slack wants & escaped inside a link, and the Play search URL has one.
-    play = (f"  ·  <{r['play_url'].replace('&', '&amp;')}|▶ Android>"
-            if r.get("play_url") else "")
+    link = _android(r.get("play_url"), "▶ Android")
+    play = f"  ·  {link}" if link else ""
     return (f"{dot(r['rating'], r['ratings'])} *<{r['url']}|{r['name']}>*"
             + (f"   {tag}" if tag else "") + rank
             + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}{play}")
@@ -210,10 +227,12 @@ def in_out_blocks(entered, exited, period_label):
         rows = sorted(entered, key=lambda e: e.get("rank") or 999)
         blocks.append(_section(
             f"*In* `{len(entered)}`\n" + _quote(
-                f"`#{e['rank']}`  <{e['url']}|{e['name']}> — {e['artist']}"
+                f"`#{e['rank']}`  <{e['url']}|{e['name']}>"
+                f"{_paren(_play_for(e))} — {e['artist']}"
                 for e in rows)))
     if exited:
-        names = ", ".join(e["name"] for e in exited[:OUT_SHOWN])
+        names = ", ".join(f"<{e['url']}|{e['name']}>{_paren(_play_for(e))}"
+                          for e in exited[:OUT_SHOWN])
         more = len(exited) - OUT_SHOWN
         if more > 0:
             names += f", …and {more} more"

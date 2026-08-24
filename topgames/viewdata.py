@@ -13,6 +13,7 @@ GAME_GENRES = {GENRE_NAMES[g] for g in GAME_GENRE_IDS if g in GENRE_NAMES}
 
 HISTORY_POINTS = 12
 PLAY_SEARCH = "https://play.google.com/store/search?c=apps&q="
+PLAY_APP = "https://play.google.com/store/apps/details?hl=en&id="
 
 
 def _bundle(row):
@@ -27,12 +28,15 @@ def play_url(bundle_id, name=""):
     """A Google Play search for the same title.
 
     Apple's bundle id and Google's package name are separate namespaces, so
-    there is no id that resolves on both stores -- but publishers reuse the
-    reverse-domain string often enough that it is the best query available.
-    The app's name is the fallback when the bundle id is missing.
+    this resolves only when the publisher reused the reverse-domain string --
+    often, but not always. Play answers a miss with its own "not found" page.
+    Without a bundle id at all it falls back to searching the title.
     """
-    query = (bundle_id or "").strip() or (name or "").strip()
-    return PLAY_SEARCH + urllib.parse.quote(query) if query else ""
+    bundle = (bundle_id or "").strip()
+    if bundle:
+        return PLAY_APP + urllib.parse.quote(bundle)
+    name = (name or "").strip()
+    return PLAY_SEARCH + urllib.parse.quote(name) if name else ""
 
 
 def _parse(iso):

@@ -164,7 +164,7 @@ def add_events(conn, events):
 
 
 def events_since(conn, iso_ts, kinds=None, unnotified_only=False):
-    sql = """SELECT e.*, a.name, a.artist, a.url, a.icon, a.avg_rating,
+    sql = """SELECT e.*, a.name, a.artist, a.url, a.bundle_id, a.icon, a.avg_rating,
                     a.rating_count, a.release_date, a.formatted_price
              FROM events e LEFT JOIN apps a ON a.app_id=e.app_id
              WHERE e.created_at >= ?"""
