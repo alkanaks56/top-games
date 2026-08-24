@@ -80,6 +80,8 @@ DEFAULTS = {
             "enabled": True,
             "time": "09:00",
             "include": ["debut", "new_entry", "new_release", "climb", "exit"],
+            # How far back the "new releases" section looks, in days.
+            "new_days": 3,
             # Skip posting entirely on a day with nothing to report, instead of
             # sending "no new games" into the channel every morning.
             "skip_if_empty": False,
@@ -92,6 +94,7 @@ DEFAULTS = {
             "day": "monday",
             "time": "09:00",
             "include": ["debut", "new_entry", "new_release", "climb", "fall", "exit"],
+            "new_days": 7,
             "skip_if_empty": False,
             "show_top_n": 10,
             "title": "",

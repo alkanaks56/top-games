@@ -3,6 +3,11 @@
 Colour comes only from links, emoji, `code` spans and the primary button --
 Block Kit offers nothing else. The rating dot is data: it encodes the rating
 band, so it differs row to row rather than decorating every line the same way.
+
+Section order is fixed: new releases, in/out, current top 10, movers, and --
+weekly only -- publishers. Daily and weekly carry deliberately different
+headers, icons and fallback text so the two are told apart at a glance in a
+busy channel.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -11,9 +16,20 @@ from . import store, viewdata
 MAX_BLOCKS = 50
 SECTION_LIMIT = 2900          # Slack's ceiling is 3000; leave headroom.
 FIELD_LIMIT = 1900            # Ceiling is 2000 per field.
-DAILY_NEW_SHOWN = 8
-WEEKLY_NEW_SHOWN = 8
+DAILY_NEW_SHOWN = 12
+WEEKLY_NEW_SHOWN = 15
+MIN_NEW_SHOWN = 5             # A quiet window falls back to this many newest.
+QUIET_WINDOW = 3              # Fewer than this in-window and the fallback runs.
+MAX_CHIPS = 3                 # Genre chips per release.
 QUIET_MOVE = 3                # |delta| below this does not count as movement.
+MOVERS_SHOWN = 5
+OUT_SHOWN = 12
+PUBS_SHOWN = 8
+
+PERIOD = {
+    "daily":  {"emoji": "📅", "label": "DAILY",  "icon": ":sunrise:"},
+    "weekly": {"emoji": "🗓️", "label": "WEEKLY", "icon": ":bar_chart:"},
+}
 
 
 def dot(rating, count):
@@ -48,8 +64,22 @@ def _context(text):
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text[:SECTION_LIMIT]}]}
 
 
+def _quote(lines):
+    """Slack's only grouping device: a quote bar down the left of a run."""
+    return "\n".join(f"> {ln}" for ln in lines)
+
+
+def chips(r):
+    """Genre labels as `code` spans -- the closest Block Kit has to a tag."""
+    gs = r.get("genres") or []
+    if isinstance(gs, str):
+        gs = [g for g in gs.split(",") if g]
+    return " ".join(f"`{g}`" for g in gs[:MAX_CHIPS])
+
+
 def _mover_line(m):
-    return f"{delta_str(m['delta'])} <{m['url']}|{m['name']}>"
+    return (f"{delta_str(m['delta'])}  <{m['url']}|{m['name']}>"
+            + (f"  → `#{m['rank']}`" if m.get("rank") else ""))
 
 
 def _top10_lines(rows):
@@ -60,9 +90,11 @@ def _top10_lines(rows):
 
 
 def _newrel_line(r):
-    return (f"{dot(r['rating'], r['ratings'])} <{r['url']}|{r['name']}>  "
-            f"{r['artist']} · {rating_str(r['rating'], r['ratings'])}"
-            + (f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""))
+    tag = chips(r)
+    rank = f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""
+    return (f"{dot(r['rating'], r['ratings'])} *<{r['url']}|{r['name']}>*"
+            + (f"   {tag}" if tag else "") + rank
+            + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}")
 
 
 def _day_label(iso):
@@ -70,6 +102,25 @@ def _day_label(iso):
         return datetime.fromisoformat(iso).strftime("%b %d").upper()
     except ValueError:
         return "EARLIER"
+
+
+def recent_releases(rows, days, shown):
+    """Releases inside the window, newest first.
+
+    Apple publishes no new-release feed, so this is a discovery sweep: some
+    days it surfaces fifteen games and some days one. Rather than post a
+    near-empty section, a window holding fewer than QUIET_WINDOW games falls
+    back to the newest few whatever their age -- flagged in the caption so the
+    reader knows the window was widened.
+    """
+    inside = [r for r in rows if (r.get("days_old") or 0) <= days]
+    widened = False
+    if len(inside) < QUIET_WINDOW:
+        inside = sorted(rows, key=lambda r: r.get("days_old") or 0)[:MIN_NEW_SHOWN]
+        widened = bool(inside)
+    inside = sorted(inside, key=lambda r: (r.get("released") or "", r["rating"]),
+                    reverse=True)
+    return inside[:shown], widened
 
 
 def group_by_day(rows):
@@ -117,6 +168,80 @@ def _two_column(lines):
     return {"type": "section", "fields": fields}
 
 
+def release_blocks(rows, total, window_days, widened):
+    """The leading section: what shipped, grouped by day, with genre chips."""
+    caption = (f"*🆕 NEW RELEASES*  ·  _last {window_days} days_  ·  `{len(rows)} games`")
+    if widened:
+        caption = (f"*🆕 NEW RELEASES*  ·  _quiet {window_days} days — showing the "
+                   f"{len(rows)} most recent_")
+    blocks = [_section(caption)]
+    for label, items in group_by_day(rows):
+        blocks.append(_section(f"*{label}*\n" +
+                               _quote(_newrel_line(r) for r in items)))
+    rest = total - len(rows)
+    if rest > 0:
+        blocks.append(_context(f"_…and {rest} more in the last 30 days_"))
+    return blocks
+
+
+def in_out_blocks(entered, exited, period_label):
+    """`In` carries each game's live rank; `out` is a plain comma list."""
+    if not entered and not exited:
+        return []
+    blocks = [_section(f"*🔄 IN AND OUT*  ·  _{period_label}_")]
+    if entered:
+        rows = sorted(entered, key=lambda e: e.get("rank") or 999)
+        blocks.append(_section(
+            f"*In* `{len(entered)}`\n" + _quote(
+                f"`#{e['rank']}`  <{e['url']}|{e['name']}> — {e['artist']}"
+                for e in rows)))
+    if exited:
+        names = ", ".join(e["name"] for e in exited[:OUT_SHOWN])
+        more = len(exited) - OUT_SHOWN
+        if more > 0:
+            names += f", …and {more} more"
+        blocks.append(_section(f"*Out* `{len(exited)}`\n" + _quote([names])))
+    return blocks
+
+
+def mover_blocks(up, down, period_label):
+    if not up and not down:
+        return []
+    blocks = [_section(f"*📊 MOVERS*  ·  _{period_label}_  ·  "
+                       f"_{len(up)} up, {len(down)} down_")]
+    if up:
+        blocks.append(_section("*Climbing*\n" +
+                               _quote(_mover_line(m) for m in up[:MOVERS_SHOWN])))
+    if down:
+        blocks.append(_section("*Falling*\n" +
+                               _quote(_mover_line(m) for m in down[:MOVERS_SHOWN])))
+    return blocks
+
+
+def publisher_blocks(items):
+    """Company first, then how many it has charting, then exactly which ranks.
+
+    The old form led with a bare count and a net rank delta summed across a
+    publisher's titles, which read as noise; the ranks themselves are the
+    thing anyone actually wanted.
+    """
+    ranks = {}
+    urls = {}
+    for r in items:
+        ranks.setdefault(r["artist"], []).append(r["rank"])
+        urls.setdefault(r["artist"], r.get("artist_url"))
+    pubs = [(a, sorted(rs)) for a, rs in ranks.items() if len(rs) > 1]
+    pubs.sort(key=lambda p: (-len(p[1]), p[1][0]))
+    if not pubs:
+        return []
+    lines = []
+    for artist, rs in pubs[:PUBS_SHOWN]:
+        name = f"<{urls[artist]}|{artist}>" if urls.get(artist) else artist
+        lines.append(f"*{name}* — {len(rs)} games — "
+                     + ", ".join(f"#{n}" for n in rs))
+    return [_section("*🏢 PUBLISHERS IN THE TOP 100*\n" + _quote(lines))]
+
+
 def _actions(cfg, new_count, weekly):
     dash = cfg["web"].get("pages_url") or cfg["web"].get("repo_url") or ""
     if not dash:
@@ -125,7 +250,7 @@ def _actions(cfg, new_count, weekly):
             "text": {"type": "plain_text", "text": "Open dashboard"}, "url": dash}]
     if new_count:
         els.append({"type": "button",
-                    "text": {"type": "plain_text", "text": f"All {new_count} new releases"},
+                    "text": {"type": "plain_text", "text": "All new releases"},
                     "url": dash})
     if weekly:
         # The spec's action_id button needs a bot token and an interactivity
@@ -147,7 +272,9 @@ def build(conn, cfg, period="daily"):
     if view is None:
         return None, []
 
-    window = timedelta(days=1 if period == "daily" else 7)
+    weekly = period == "weekly"
+    style = PERIOD["weekly" if weekly else "daily"]
+    window = timedelta(days=7 if weekly else 1)
     since = (datetime.now(timezone.utc) - window).isoformat(timespec="seconds")
     slack_cfg = cfg["slack"][period]
 
@@ -164,99 +291,74 @@ def build(conn, cfg, period="daily"):
     new_rel = view["new_releases"]
     event_ids = [e["id"] for e in entered + exited]
 
-    stamp = datetime.now().strftime("%b %d, %Y")
+    now = datetime.now()
+    new_days = int(slack_cfg.get("new_days") or (7 if weekly else 3))
+    shown, widened = recent_releases(
+        new_rel, new_days, WEEKLY_NEW_SHOWN if weekly else DAILY_NEW_SHOWN)
     top10 = view["items"][:10]
+    period_label = "this week" if weekly else "vs yesterday"
 
-    if period == "daily":
-        # A day with nothing to say still posts: silence is indistinguishable
-        # from a broken schedule.
-        real_movement = [m for m in movers if abs(m["delta"]) >= QUIET_MOVE]
-        if not real_movement and not entered:
-            link = f" <{dash}|Open>" if dash else ""
-            return {
-                "username": cfg["slack"].get("username") or "top_games",
-                "icon_emoji": cfg["slack"].get("icon_emoji") or ":jigsaw:",
-                "text": f"{scope} daily — chart unchanged",
-                "blocks": [_context(
-                    f"{scope} — daily · {stamp} · chart unchanged, "
-                    f"no new entries.{link}")],
-            }, event_ids
-
-        blocks = [
-            {"type": "header", "text": {"type": "plain_text",
-             "text": f"{scope} — daily chart digest"[:150]}},
-            _context(f"{stamp}  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}"
-                     f"  ·  {len(new_rel)} new since last run"),
-        ]
-        if up or down:
-            line = "   ".join(_mover_line(m) for m in (up[:5] + down[:5]))
-            blocks.append(_section(
-                f"*Movers*  _vs {'yesterday' if view['span_days'] <= 1 else 'last run'}_\n"
-                f"{line}  ·  _{len(up)} up, {len(down)} down_"))
-        blocks += [{"type": "divider"},
-                   _section(f"*Current top 10*"),
-                   _two_column(_top10_lines(top10))]
-        if entered:
-            blocks += [{"type": "divider"}, _section(
-                "*New to the chart*\n" + "\n".join(
-                    f"▲ <{e['url']}|{e['name']}>  entered at #{e['rank']} · {e['artist']}"
-                    for e in entered[:8]))]
-        shown = sorted(new_rel, key=lambda r: -r["rating"])[:DAILY_NEW_SHOWN]
-        if shown:
-            blocks += [{"type": "divider"}, _section(
-                f"*New releases*  `{len(new_rel)} · showing {len(shown)} highest rated`")]
-            for label, items in group_by_day(shown):
-                blocks.append(_section(f"*{label}*\n" +
-                                       "\n".join(_newrel_line(r) for r in items)))
-            rest = len(new_rel) - len(shown)
-            if rest:
-                blocks.append(_context(f"_…and {rest} more_"))
-        fallback = (f"{scope} daily — {len(up)} up, {len(down)} down, "
-                    f"{len(entered)} new")
-        next_run = f'tomorrow {cfg["slack"]["daily"].get("time","09:00")} {tz}'
+    if weekly:
+        first = now - timedelta(days=6)
+        # "Aug 18-24" reads better than "Aug 18-Aug 24" when the week
+        # does not straddle a month boundary.
+        end = now.strftime("%d") if first.month == now.month else now.strftime("%b %d")
+        title = (f"{style['emoji']} WEEKLY ROUNDUP · {scope} · "
+                 f"{first.strftime('%b %d')}–{end}")
+        sub = (f"_Week in review_  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
+               f"*{len(shown)}* new releases  ·  {len(entered)} in, {len(exited)} out")
+        next_run = f'Monday {slack_cfg.get("time", "09:00")} {tz}'
+        fallback = (f"[WEEKLY] {scope} — {len(shown)} new releases, "
+                    f"{len(entered)} in, {len(exited)} out")
     else:
-        start = (datetime.now() - timedelta(days=6)).strftime("%b %d")
-        blocks = [
-            {"type": "header", "text": {"type": "plain_text",
-             "text": f"{scope} — week of {start}–{datetime.now().strftime('%b %d')}"[:150]}},
-            _context(f"`{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
-                     f"*{len(new_rel)}* new releases  ·  "
-                     f"{len(entered)} in, {len(exited)} out"),
-        ]
-        if up or down:
-            blocks.append(_section("*Movers*  _7 days_\n" +
-                "   ".join(_mover_line(m) for m in (up[:5] + down[:5]))))
-        blocks += [{"type": "divider"}, _section("*Top 10*  _7-day change_"),
-                   _two_column(_top10_lines(top10))]
-        if entered:
-            blocks += [{"type": "divider"}, _section("*In*\n" + "\n".join(
-                f"▲ <{e['url']}|{e['name']}>  entered at #{e['rank']} · {e['artist']}"
-                for e in entered[:8]))]
-        if exited:
-            blocks.append(_section("*Out*\n" + "\n".join(
-                f"▼ <{e['url']}|{e['name']}>  was #{e['prev_rank']} · {e['artist']}"
-                for e in exited[:8])))
-        shown = sorted(new_rel, key=lambda r: -r["rating"])[:WEEKLY_NEW_SHOWN]
-        if shown:
-            blocks += [{"type": "divider"}, _section(
-                f"*New releases*  `{len(new_rel)} · showing {len(shown)} highest rated`")]
-            for label, items in group_by_day(shown):
-                blocks.append(_section(f"*{label}*\n" +
-                                       "\n".join(_newrel_line(r) for r in items)))
-            rest = len(new_rel) - len(shown)
-            if rest:
-                blocks.append(_context(f"_…and {rest} more_"))
-        pubs = [p for p in view["publishers"] if p["titles"] > 1][:8]
-        if pubs:
-            blocks += [{"type": "divider"}, _section(
-                "*Publishers in the top 100*\n" + "\n".join(
-                    f"`{p['titles']:>2}` {delta_str(p['net_delta']):>3}  {p['artist']}"
-                    for p in pubs))]
-        fallback = (f"{scope} weekly — {len(new_rel)} new releases, "
-                    f"{len(entered)} chart entries")
-        next_run = f'Monday {cfg["slack"]["weekly"].get("time","09:00")} {tz}'
+        title = f"{style['emoji']} DAILY · {scope} · {now.strftime('%a, %b %d')}"
+        sub = (f"_Since yesterday_  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
+               f"new releases across all genres")
+        next_run = f'tomorrow {slack_cfg.get("time", "09:00")} {tz}'
+        fallback = (f"[DAILY] {scope} — {len(shown)} new, "
+                    f"{len(up)} up, {len(down)} down, {len(entered)} in")
 
-    act = _actions(cfg, len(new_rel), period == "weekly")
+    # A day with nothing at all to say still posts: silence is
+    # indistinguishable from a broken schedule.
+    real_movement = [m for m in movers if abs(m["delta"]) >= QUIET_MOVE]
+    if not weekly and not real_movement and not entered and not shown:
+        link = f" <{dash}|Open>" if dash else ""
+        return {
+            "username": cfg["slack"].get("username") or "top_games",
+            "icon_emoji": slack_cfg.get("icon_emoji") or style["icon"],
+            "text": f"[DAILY] {scope} — chart unchanged",
+            "blocks": [_context(
+                f"{style['emoji']} *DAILY* · {scope} · {now.strftime('%a, %b %d')} — "
+                f"chart unchanged, no new entries or releases.{link}")],
+        }, event_ids
+
+    blocks = [
+        {"type": "header",
+         "text": {"type": "plain_text", "text": title[:150], "emoji": True}},
+        _context(sub),
+    ]
+    if shown:
+        blocks += [{"type": "divider"}]
+        blocks += release_blocks(shown, len(new_rel), new_days, widened)
+
+    io = in_out_blocks(entered, exited, "this week" if weekly else "since yesterday")
+    if io:
+        blocks += [{"type": "divider"}] + io
+
+    blocks += [{"type": "divider"},
+               _section("*🏆 CURRENT TOP 10*" + ("  ·  _7-day change_" if weekly else "")),
+               _two_column(_top10_lines(top10))]
+
+    mv = mover_blocks(up, down, "7 days" if weekly else "vs yesterday")
+    if mv:
+        blocks += [{"type": "divider"}] + mv
+
+    if weekly:
+        pubs = publisher_blocks(view["items"])
+        if pubs:
+            blocks += [{"type": "divider"}] + pubs
+
+    act = _actions(cfg, len(new_rel), weekly)
     if act:
         blocks.append(act)
     blocks.append(_context(
@@ -271,7 +373,7 @@ def build(conn, cfg, period="daily"):
 
     return {
         "username": cfg["slack"].get("username") or "top_games",
-        "icon_emoji": cfg["slack"].get("icon_emoji") or ":jigsaw:",
+        "icon_emoji": slack_cfg.get("icon_emoji") or style["icon"],
         "text": fallback,
         "blocks": blocks,
     }, event_ids
