@@ -305,7 +305,7 @@ function playLink(r){
               encodeURIComponent(r.name) : '');
   if (!q) return '';
   return `<a class="play" href="${esc(q)}" target="_blank" rel="noopener"
-     title="Open ${esc(r.name)} on Google Play" aria-label="Open on Google Play">
+     title="Search Google Play for ${esc(r.name)}" aria-label="Search Google Play">
      <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path
        d="M3 2.2v19.6c0 .6.7 1 1.2.6l14.3-9.8c.4-.3.4-1 0-1.3L4.2 1.6C3.7 1.2 3 1.6 3 2.2z"
      /></svg></a>`;

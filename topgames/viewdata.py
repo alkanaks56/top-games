@@ -27,16 +27,14 @@ def _bundle(row):
 def play_url(bundle_id, name=""):
     """A Google Play search for the same title.
 
-    Apple's bundle id and Google's package name are separate namespaces, so
-    this resolves only when the publisher reused the reverse-domain string --
-    often, but not always. Play answers a miss with its own "not found" page.
-    Without a bundle id at all it falls back to searching the title.
+    A direct details?id= link was tried first and mostly 404ed: publishers
+    rarely reuse the iOS reverse-domain string on Android (com.x.game.ios,
+    com.x.gameandroid, an entirely different domain). Searching the title
+    lands on the right game far more often than a guessed package resolves,
+    so the query wins over the guess.
     """
-    bundle = (bundle_id or "").strip()
-    if bundle:
-        return PLAY_APP + urllib.parse.quote(bundle)
-    name = (name or "").strip()
-    return PLAY_SEARCH + urllib.parse.quote(name) if name else ""
+    query = (name or "").strip() or (bundle_id or "").strip()
+    return PLAY_SEARCH + urllib.parse.quote(query) if query else ""
 
 
 def _parse(iso):
