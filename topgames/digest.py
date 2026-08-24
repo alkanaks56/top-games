@@ -18,8 +18,7 @@ SECTION_LIMIT = 2900          # Slack's ceiling is 3000; leave headroom.
 FIELD_LIMIT = 1900            # Ceiling is 2000 per field.
 DAILY_NEW_SHOWN = 12
 WEEKLY_NEW_SHOWN = 15
-MIN_NEW_SHOWN = 5             # A quiet window falls back to this many newest.
-QUIET_WINDOW = 3              # Fewer than this in-window and the fallback runs.
+LAUNCH_TODAY = "🚀"           # Marks a game that shipped today, not merely this window.
 MAX_CHIPS = 3                 # Genre chips per release.
 QUIET_MOVE = 3                # |delta| below this does not count as movement.
 MOVERS_SHOWN = 5
@@ -105,22 +104,20 @@ def _day_label(iso):
 
 
 def recent_releases(rows, days, shown):
-    """Releases inside the window, newest first.
+    """Releases inside the window, newest first. The window is strict.
 
-    Apple publishes no new-release feed, so this is a discovery sweep: some
-    days it surfaces fifteen games and some days one. Rather than post a
-    near-empty section, a window holding fewer than QUIET_WINDOW games falls
-    back to the newest few whatever their age -- flagged in the caption so the
-    reader knows the window was widened.
+    Apple publishes no new-release feed, so this is a discovery sweep and some
+    days it surfaces one game. That is the honest answer, so a thin window
+    stays thin rather than quietly reaching further back.
     """
     inside = [r for r in rows if (r.get("days_old") or 0) <= days]
-    widened = False
-    if len(inside) < QUIET_WINDOW:
-        inside = sorted(rows, key=lambda r: r.get("days_old") or 0)[:MIN_NEW_SHOWN]
-        widened = bool(inside)
     inside = sorted(inside, key=lambda r: (r.get("released") or "", r["rating"]),
                     reverse=True)
-    return inside[:shown], widened
+    return inside[:shown]
+
+
+def launched_today(rows):
+    return [r for r in rows if (r.get("days_old") or 0) == 0]
 
 
 def group_by_day(rows):
@@ -168,19 +165,34 @@ def _two_column(lines):
     return {"type": "section", "fields": fields}
 
 
-def release_blocks(rows, total, window_days, widened):
-    """The leading section: what shipped, grouped by day, with genre chips."""
-    caption = (f"*🆕 NEW RELEASES*  ·  _last {window_days} days_  ·  `{len(rows)} games`")
-    if widened:
-        caption = (f"*🆕 NEW RELEASES*  ·  _quiet {window_days} days — showing the "
-                   f"{len(rows)} most recent_")
+def release_blocks(rows, total, window_days):
+    """The leading section: what shipped, grouped by day, with genre chips.
+
+    Anything that launched *today* is called out in the subtitle and kept in
+    its own group -- inside a 3- or 7-day window "new" otherwise blurs, and a
+    same-day launch is the one thing worth reacting to immediately.
+    """
+    fresh = launched_today(rows)
+    caption = f"*🆕 NEW RELEASES*  ·  _last {window_days} days_  ·  `{len(rows)} game{'' if len(rows) == 1 else 's'}`"
+    if fresh:
+        caption += (f"\n{LAUNCH_TODAY} *{len(fresh)} launched today*"
+                    + ("" if len(fresh) == len(rows) else
+                       f"  ·  _{len(rows) - len(fresh)} earlier in the window_"))
     blocks = [_section(caption)]
-    for label, items in group_by_day(rows):
+
+    # group_by_day merges thin days into ranges, which would fold today into
+    # "AUG 19 - 24" and lose exactly the distinction we just drew.
+    if fresh:
+        blocks.append(_section(f"*{LAUNCH_TODAY} TODAY*\n" +
+                               _quote(_newrel_line(r) for r in
+                                      sorted(fresh, key=lambda r: -r["rating"]))))
+    rest = [r for r in rows if (r.get("days_old") or 0) != 0]
+    for label, items in group_by_day(rest):
         blocks.append(_section(f"*{label}*\n" +
                                _quote(_newrel_line(r) for r in items)))
-    rest = total - len(rows)
-    if rest > 0:
-        blocks.append(_context(f"_…and {rest} more in the last 30 days_"))
+    more = total - len(rows)
+    if more > 0:
+        blocks.append(_context(f"_…and {more} more in the last 30 days_"))
     return blocks
 
 
@@ -261,8 +273,22 @@ def _actions(cfg, new_count, weekly):
 
 
 def _entries_exits(conn, cfg, since):
-    entered = store.events_since(conn, since, kinds=["new_entry", "debut"])
-    exited = store.events_since(conn, since, kinds=["exit"])
+    """Where each game ended the window, not every move it made inside it.
+
+    Over a week a game can enter, drop out and enter again. Listing it under
+    both headings reads as a data error, so only its latest event counts --
+    which is also the one that says where it stands now.
+    """
+    events = store.events_since(conn, since,
+                                kinds=["new_entry", "debut", "exit"])
+    latest, seen = [], set()
+    for e in events:                       # newest first
+        if e["app_id"] in seen:
+            continue
+        seen.add(e["app_id"])
+        latest.append(e)
+    entered = [e for e in latest if e["kind"] != "exit"]
+    exited = [e for e in latest if e["kind"] == "exit"]
     return entered, exited
 
 
@@ -293,8 +319,14 @@ def build(conn, cfg, period="daily"):
 
     now = datetime.now()
     new_days = int(slack_cfg.get("new_days") or (7 if weekly else 3))
-    shown, widened = recent_releases(
+    shown = recent_releases(
         new_rel, new_days, WEEKLY_NEW_SHOWN if weekly else DAILY_NEW_SHOWN)
+    fresh_today = launched_today(shown)
+    # Repeated in the subtitle and the notification text: a same-day launch
+    # should be visible without opening the message.
+    today_tag = (f"  ·  {LAUNCH_TODAY} *{len(fresh_today)} launched today*"
+                 if fresh_today else "")
+    today_short = f" ({len(fresh_today)} today)" if fresh_today else ""
     top10 = view["items"][:10]
     period_label = "this week" if weekly else "vs yesterday"
 
@@ -306,16 +338,17 @@ def build(conn, cfg, period="daily"):
         title = (f"{style['emoji']} WEEKLY ROUNDUP · {scope} · "
                  f"{first.strftime('%b %d')}–{end}")
         sub = (f"_Week in review_  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
-               f"*{len(shown)}* new releases  ·  {len(entered)} in, {len(exited)} out")
+               f"*{len(shown)}* new releases{today_tag}  ·  "
+               f"{len(entered)} in, {len(exited)} out")
         next_run = f'Monday {slack_cfg.get("time", "09:00")} {tz}'
-        fallback = (f"[WEEKLY] {scope} — {len(shown)} new releases, "
+        fallback = (f"[WEEKLY] {scope} — {len(shown)} new releases{today_short}, "
                     f"{len(entered)} in, {len(exited)} out")
     else:
         title = f"{style['emoji']} DAILY · {scope} · {now.strftime('%a, %b %d')}"
         sub = (f"_Since yesterday_  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
-               f"new releases across all genres")
+               f"new releases across all genres{today_tag}")
         next_run = f'tomorrow {slack_cfg.get("time", "09:00")} {tz}'
-        fallback = (f"[DAILY] {scope} — {len(shown)} new, "
+        fallback = (f"[DAILY] {scope} — {len(shown)} new{today_short}, "
                     f"{len(up)} up, {len(down)} down, {len(entered)} in")
 
     # A day with nothing at all to say still posts: silence is
@@ -339,7 +372,7 @@ def build(conn, cfg, period="daily"):
     ]
     if shown:
         blocks += [{"type": "divider"}]
-        blocks += release_blocks(shown, len(new_rel), new_days, widened)
+        blocks += release_blocks(shown, len(new_rel), new_days)
 
     io = in_out_blocks(entered, exited, "this week" if weekly else "since yesterday")
     if io:
