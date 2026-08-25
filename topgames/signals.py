@@ -20,6 +20,15 @@ def _days_since(iso):
     return (datetime.now(timezone.utc) - dt).days
 
 
+def _released_since(record, cutoff):
+    released = sources._parse_dt(record.get("release_date"))
+    if released is None:
+        return False
+    if released.tzinfo is None:
+        released = released.replace(tzinfo=timezone.utc)
+    return released >= cutoff
+
+
 def refresh(conn, cfg, verbose=True):
     """Pull the chart plus new releases, store them, and derive events.
 
@@ -81,21 +90,38 @@ def refresh(conn, cfg, verbose=True):
                 })
 
     # New releases across the whole genre, not just the ones that charted.
-    log(f"Sweeping {len(cfg['search_terms'])} genre terms + "
-        f"{len(cfg.get('discovery_terms') or [])} discovery terms...")
-    genre_name = cfg["genre"].replace("_", " ").title()
-    # Genre terms are searched inside the genre; discovery terms are searched
-    # across the whole store so other genres' releases surface too.
-    fresh, all_found, errors = sources.sweep_new_releases(
-        cfg["search_terms"], country, genre_id,
-        within_days=sig["new_release_days"], genre_name=genre_name)
-    wide_terms = cfg.get("discovery_terms") or []
-    if wide_terms:
-        _f, wide, wide_errs = sources.sweep_new_releases(
-            wide_terms, country, None,
-            within_days=sig["new_release_days"], genre_name=None)
-        all_found.update({k: v for k, v in wide.items() if k not in all_found})
-        errors += wide_errs
+    shared = cfg.get("_swept")
+    if shared is not None:
+        # cmd_refresh already swept this storefront, using the recency terms
+        # that actually surface new games. Sweeping again here would spend a
+        # second round of requests to store a thinner result than the site is
+        # publishing -- which is how the digest came to report nine new
+        # releases on a day the dashboard listed forty-two.
+        log(f"Reusing the storefront sweep ({len(shared)} games).")
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            days=sig["new_release_days"])
+        all_found, errors = dict(shared), []
+        fresh = [r for r in all_found.values() if _released_since(r, cutoff)]
+    else:
+        log(f"Sweeping {len(cfg['search_terms'])} genre terms + "
+            f"{len(cfg.get('discovery_terms') or [])} discovery terms...")
+        genre_name = cfg["genre"].replace("_", " ").title()
+        # Genre terms are searched inside the genre; discovery terms are
+        # searched across the whole store so other genres' releases surface.
+        fresh, all_found, errors = sources.sweep_new_releases(
+            cfg["search_terms"], country, genre_id,
+            within_days=sig["new_release_days"], genre_name=genre_name)
+        for term_set, gid in ((cfg.get("recency_terms") or [], None),
+                              (cfg.get("discovery_terms") or [], None)):
+            if not term_set:
+                continue
+            _f, wide, wide_errs = sources.sweep_new_releases(
+                term_set, country, gid,
+                within_days=sig["new_release_days"], genre_name=None)
+            fresh += [r for r in _f if r["app_id"] not in all_found]
+            all_found.update({k: v for k, v in wide.items()
+                              if k not in all_found})
+            errors += wide_errs
     for err in errors:
         log(f"  warning: search term failed -- {err}")
 

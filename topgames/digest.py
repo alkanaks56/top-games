@@ -138,7 +138,7 @@ def recent_releases(rows, days, shown):
     inside = [r for r in rows if (r.get("days_old") or 0) <= days]
     inside = sorted(inside, key=lambda r: (r.get("released") or "", r["rating"]),
                     reverse=True)
-    return inside[:shown]
+    return inside[:shown], len(inside)
 
 
 def launched_today(rows):
@@ -190,7 +190,7 @@ def _two_column(lines):
     return {"type": "section", "fields": fields}
 
 
-def release_blocks(rows, total, window_days):
+def release_blocks(rows, in_window, window_days):
     """The leading section: what shipped, grouped by day, with genre chips.
 
     Anything that launched *today* is called out in the subtitle and kept in
@@ -198,11 +198,14 @@ def release_blocks(rows, total, window_days):
     same-day launch is the one thing worth reacting to immediately.
     """
     fresh = launched_today(rows)
-    caption = f"*🆕 NEW RELEASES*  ·  _last {window_days} days_  ·  `{len(rows)} game{'' if len(rows) == 1 else 's'}`"
+    n = in_window
+    caption = (f"*🆕 NEW RELEASES*  ·  _last {window_days} days_  ·  "
+               f"`{n} game{'' if n == 1 else 's'}`"
+               + (f"  ·  _showing the {len(rows)} newest_" if len(rows) < n else ""))
     if fresh:
+        earlier = n - len(fresh)
         caption += (f"\n{LAUNCH_TODAY} *{len(fresh)} launched today*"
-                    + ("" if len(fresh) == len(rows) else
-                       f"  ·  _{len(rows) - len(fresh)} earlier in the window_"))
+                    + (f"  ·  _{earlier} earlier in the window_" if earlier else ""))
     blocks = [_section(caption)]
 
     # group_by_day merges thin days into ranges, which would fold today into
@@ -215,9 +218,9 @@ def release_blocks(rows, total, window_days):
     for label, items in group_by_day(rest):
         blocks.append(_section(f"*{label}*\n" +
                                _quote(_newrel_line(r) for r in items)))
-    more = total - len(rows)
+    more = in_window - len(rows)
     if more > 0:
-        blocks.append(_context(f"_…and {more} more in the last 30 days_"))
+        blocks.append(_context(f"_…and {more} more in the last {window_days} days_"))
     return blocks
 
 
@@ -348,7 +351,7 @@ def build(conn, cfg, period="daily"):
 
     now = datetime.now()
     new_days = int(slack_cfg.get("new_days") or (7 if weekly else 3))
-    shown = recent_releases(
+    shown, in_window = recent_releases(
         new_rel, new_days, WEEKLY_NEW_SHOWN if weekly else DAILY_NEW_SHOWN)
     fresh_today = launched_today(shown)
     # Repeated in the subtitle and the notification text: a same-day launch
@@ -367,17 +370,17 @@ def build(conn, cfg, period="daily"):
         title = (f"{style['emoji']} WEEKLY ROUNDUP · {scope} · "
                  f"{first.strftime('%b %d')}–{end}")
         sub = (f"_Week in review_  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
-               f"*{len(shown)}* new releases{today_tag}  ·  "
+               f"*{in_window}* new releases{today_tag}  ·  "
                f"{len(entered)} in, {len(exited)} out")
         next_run = f'Monday {slack_cfg.get("time", "09:00")} {tz}'
-        fallback = (f"[WEEKLY] {scope} — {len(shown)} new releases{today_short}, "
+        fallback = (f"[WEEKLY] {scope} — {in_window} new releases{today_short}, "
                     f"{len(entered)} in, {len(exited)} out")
     else:
         title = f"{style['emoji']} DAILY · {scope} · {now.strftime('%a, %b %d')}"
         sub = (f"_Since yesterday_  ·  `{cfg['chart']}`  ·  top {cfg['chart_size']}  ·  "
                f"new releases across all genres{today_tag}")
         next_run = f'tomorrow {slack_cfg.get("time", "09:00")} {tz}'
-        fallback = (f"[DAILY] {scope} — {len(shown)} new{today_short}, "
+        fallback = (f"[DAILY] {scope} — {in_window} new{today_short}, "
                     f"{len(up)} up, {len(down)} down, {len(entered)} in")
 
     # A day with nothing at all to say still posts: silence is
@@ -401,7 +404,7 @@ def build(conn, cfg, period="daily"):
     ]
     if shown:
         blocks += [{"type": "divider"}]
-        blocks += release_blocks(shown, len(new_rel), new_days)
+        blocks += release_blocks(shown, in_window, new_days)
 
     io = in_out_blocks(entered, exited, "this week" if weekly else "since yesterday")
     if io:

@@ -54,6 +54,7 @@ def sweep_releases(cfg, country, primary):
     # thing that filter exists to show.
     _fresh, found, errors = sources.sweep_new_releases(
         terms, country, None, within_days=36500, genre_name=None)
+    games = {k: v for k, v in found.items() if v.get("is_game", True)}
 
     now = datetime.now(timezone.utc)
     rows = []
@@ -87,7 +88,7 @@ def sweep_releases(cfg, country, primary):
     # file the browser has to pull down.
     rows.sort(key=lambda r: r["released"], reverse=True)
     cap = int(cfg.get("release_pool_size", 3000))
-    return rows[:cap], errors
+    return rows[:cap], errors, games
 
 
 def _previous_pool(country, cfg):
@@ -183,27 +184,28 @@ def cmd_refresh(args, cfg):
     """Refresh every configured dataset, isolating failures."""
     ds = config.datasets(cfg)
     failed = []
+    swept = {}
 
     # One release sweep per storefront, shared by that country's charts.
     if cfg.get("sweep_countries", True):
         primary_country = config.primary(cfg)["country"]
         def sweep_one(country):
             try:
-                rows, errs = sweep_releases(cfg, country,
-                                            country == primary_country)
+                rows, errs, found = sweep_releases(cfg, country,
+                                                   country == primary_country)
                 rows = _merge_pool(country, rows, cfg)
                 os.makedirs(os.path.dirname(_releases_path(country)), exist_ok=True)
                 with open(_releases_path(country), "w") as fh:
                     json.dump(rows, fh, default=str)
-                return country, rows, errs, None
+                return country, rows, errs, found, None
             except Exception as exc:
-                return country, None, None, exc
+                return country, None, None, None, exc
 
         # One storefront at a time: each sweep is already 8-way concurrent
         # internally, and stacking countries on top of that made Apple start
         # dropping requests (68-94 failed terms per country).
         with ThreadPoolExecutor(max_workers=1) as pool:
-            for country, rows, errs, exc in pool.map(
+            for country, rows, errs, found, exc in pool.map(
                     sweep_one, sorted({d["country"] for d in ds})):
                 if exc is not None:
                     failed.append((f"releases-{country}", exc))
@@ -212,11 +214,17 @@ def cmd_refresh(args, cfg):
                 recent = sum(1 for r in rows
                              if (r["days_old"] or 9999)
                              <= cfg["signals"]["new_release_days"])
+                swept[country] = found
                 print(f"  releases {country:20} {len(rows):>5} pooled, "
                       f"{recent} in the last {cfg['signals']['new_release_days']}d"
                       + (f" ({len(errs)} term errors)" if errs else ""))
     # The primary writes SQLite, so it runs on its own; the chart-only datasets
     # only write their own JSON file and are safe to fan out.
+    # The storefront sweep above already found every recent game; handing it
+    # to the signals pass keeps SQLite and the published pool in step and
+    # spares Apple a second identical sweep.
+    for d in ds:
+        d["_swept"] = swept.get(d["country"])
     primary = [d for d in ds if d["history"]]
     others = [d for d in ds if not d["history"]]
 
