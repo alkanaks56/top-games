@@ -108,17 +108,20 @@ def _play_for(e):
 
 
 def _newrel_line(r):
-    tag = chips(r)
-    rank = f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""
-    # The App Store link is the title itself; Android hangs off the end,
-    # since it is a search rather than a resolved page.
+    """One line: title, publisher, rating if it has one, genre chips.
 
-    # No bold on the name: Slack renders *<url|text>* literally, asterisks and
-    # all, and the link colour already sets the title apart from the line.
-    return (f"{dot(r['rating'], r['ratings'])} <{r['url']}|{r['name']}>"
-            f"{_paren(r.get('play_url'))}"
-            + (f"   {tag}" if tag else "") + rank
-            + f"\n>     {r['artist']} · {rating_str(r['rating'], r['ratings'])}")
+    An unrated game says nothing about its rating rather than saying it has
+    none -- and with no rating there is no band for the dot to encode, so it
+    goes too. No bold on the name: Slack renders *<url|text>* literally,
+    asterisks and all, and the link colour already sets the title apart.
+    """
+    band = f"{dot(r['rating'], r['ratings'])} " if r["ratings"] else ""
+    rated = f" · {rating_str(r['rating'], r['ratings'])}" if r["ratings"] else ""
+    tag = chips(r)
+    return (f"{band}<{r['url']}|{r['name']}>{_paren(r.get('play_url'))}"
+            f"   {r['artist']}{rated}"
+            + (f"   {tag}" if tag else "")
+            + (f"  `TOP 100 #{r['rank']}`" if r.get("rank") else ""))
 
 
 def _day_label(iso):
