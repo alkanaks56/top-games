@@ -90,22 +90,44 @@ def sweep_releases(cfg, country, primary):
     return rows[:cap], errors
 
 
+def _previous_pool(country, cfg):
+    """The pool this run should build on.
+
+    The pools are gitignored, so a CI checkout starts without them and the
+    merge below would have nothing to merge into -- which is how a throttled
+    run managed to publish six recent releases in the first place. The last
+    published pool is on the Pages site, which costs nothing to keep and is
+    by definition what the site is serving right now.
+    """
+    try:
+        with open(_releases_path(country)) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        pass
+    base = (cfg.get("web") or {}).get("pages_url") or ""
+    if not base:
+        return []
+    try:
+        return sources._get_json(
+            base.rstrip("/") + f"/releases/{country}.json", retries=1)
+    except Exception:
+        return []                      # first ever run, or the site is down
+
+
 def _merge_pool(country, rows, cfg):
     """Fold a sweep into the pool already published, newest metadata winning.
 
-    Apple throttles hard from datacenter IPs: one CI run lost 101 of 107 search
-    terms and wrote back a pool of 944 rows with six recent releases, silently
-    replacing a good 3000-row pool. A sweep is a discovery sample, so a thin
-    one means "found less this time", never "these games ceased to exist" --
-    merging makes a throttled run harmless instead of destructive.
+    Apple throttles hard from GitHub's IPs: one run lost 101 of the US sweep's
+    107 search terms and published a pool of six recent releases. A sweep is a
+    discovery sample, so a thin one means "found less this time", never "these
+    games ceased to exist" -- merging makes a throttled run harmless.
     """
     merged = {}
-    try:
-        with open(_releases_path(country)) as fh:
-            for r in json.load(fh):
-                merged[r["app_id"]] = r
-    except (OSError, ValueError, KeyError):
-        pass
+    for r in _previous_pool(country, cfg):
+        try:
+            merged[r["app_id"]] = r
+        except (TypeError, KeyError):
+            continue
     for r in rows:                      # this run's metadata is the fresher one
         merged[r["app_id"]] = r
     # days_old was computed when the row was swept; carrying it forward would
