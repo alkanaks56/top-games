@@ -38,14 +38,15 @@ def sweep_releases(cfg, country, primary):
     own sweep. Only the primary gets the full genre vocabulary; the rest use the
     generic discovery terms, since the pool is shown cross-genre anyway.
     """
+    recency = list(cfg.get("recency_terms") or [])
     if primary:
-        terms = list(cfg.get("search_terms") or []) + list(
+        terms = recency + list(cfg.get("search_terms") or []) + list(
             cfg.get("discovery_terms") or [])
     else:
         # The genre terms come along: without them a secondary storefront never
         # searches "sudoku" or "nonogram", so the genre it is tracked for is the
         # one it discovers worst.
-        terms = list(cfg.get("search_terms") or []) + list(
+        terms = recency + list(cfg.get("search_terms") or []) + list(
             cfg.get("discovery_terms_short")
             or cfg.get("discovery_terms") or [])
     # No date cut-off here: the dashboard offers an age filter over the whole

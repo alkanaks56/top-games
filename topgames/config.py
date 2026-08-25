@@ -134,6 +134,16 @@ DEFAULTS = {
     # Non-primary storefronts sweep this subset rather than all 92 terms. The
     # long tail mostly rediscovers the same apps, and those storefronts throttle
     # hard enough that the extra terms cost minutes for very little.
+    # Apple's search is relevance-ranked with no date sort, so genre words
+    # return whatever is established -- "puzzle" comes back with a median age
+    # of five years and one game from the last month. These few phrases are
+    # the exception: they hit a recency bucket where nearly every result is
+    # weeks old, and between them they surface roughly three times what the
+    # entire genre vocabulary finds. Every storefront gets them.
+    "recency_terms": [
+        "new game", "newest game", "latest game", "new games free",
+        "new free games", "new games",
+    ],
     "discovery_terms_short": [
         "game", "games", "arcade", "puzzle", "action", "adventure", "racing",
         "strategy", "simulator", "idle", "rpg", "card", "board", "casino",
