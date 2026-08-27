@@ -2,11 +2,15 @@ name: Update charts and publish
 
 on:
   schedule:
-    # 06:00 UTC == 09:00 Europe/Istanbul, the zone in config.slack.timezone.
-    # Türkiye has no DST, so this stays correct year-round. GitHub queues
-    # scheduled jobs on a best-effort basis, so the actual start can drift by
-    # minutes to hours under load.
-    - cron: "0 6 * * *"
+    # GitHub runs scheduled jobs best-effort, and one of these started eleven
+    # hours late -- posting the daily digest at 8pm. So the morning gets four
+    # attempts on off-the-hour minutes (the top of the hour is the congested
+    # one), and `digest --if-due` decides which of them actually posts: past
+    # 09:00 Europe/Istanbul, once per day. Extra runs only refresh data.
+    - cron: "35 5 * * *"      # 08:35 Istanbul -- refresh only
+    - cron: "20 6 * * *"      # 09:20 -- normally the one that posts
+    - cron: "20 8 * * *"      # 11:20 -- catches a delayed 06:20
+    - cron: "20 11 * * *"     # 14:20 -- last resort
   workflow_dispatch:
     inputs:
       send_digest:
@@ -56,7 +60,12 @@ jobs:
 
       - name: Post Slack digest
         if: steps.which.outputs.period != 'none'
-        run: python -m topgames digest ${{ steps.which.outputs.period }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python -m topgames digest ${{ steps.which.outputs.period }}
+          else
+            python -m topgames digest ${{ steps.which.outputs.period }} --if-due
+          fi
 
       - name: Build static site and Slack payloads
         run: python -m topgames export --outdir site --prune

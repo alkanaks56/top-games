@@ -59,6 +59,23 @@ def _migrate(conn):
                         ("bundle_id", "ALTER TABLE apps ADD COLUMN bundle_id TEXT")):
         if column not in have:
             conn.execute(ddl)
+    # Which digests have gone out, so a run that GitHub starts eleven hours
+    # late does not post a second copy of a message already sent.
+    conn.execute("""CREATE TABLE IF NOT EXISTS digest_log (
+        period TEXT NOT NULL, local_date TEXT NOT NULL, sent_at TEXT NOT NULL,
+        PRIMARY KEY (period, local_date))""")
+    conn.commit()
+
+
+def digest_sent(conn, period, local_date):
+    return conn.execute(
+        "SELECT 1 FROM digest_log WHERE period=? AND local_date=?",
+        (period, local_date)).fetchone() is not None
+
+
+def mark_digest_sent(conn, period, local_date, sent_at):
+    conn.execute("INSERT OR REPLACE INTO digest_log VALUES (?,?,?)",
+                 (period, local_date, sent_at))
     conn.commit()
 
 

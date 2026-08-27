@@ -281,8 +281,51 @@ def _cmd_refresh_primary(args, cfg):
     return 0
 
 
+def local_now(cfg):
+    """Now, in the timezone the schedule is written in."""
+    name = (cfg.get("slack") or {}).get("timezone") or "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(name))
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def digest_is_due(conn, cfg, period, now=None):
+    """Whether this run is the one that should post.
+
+    GitHub runs scheduled jobs best-effort: most mornings the 06:00 UTC cron
+    starts within the hour, but one started eleven hours late and posted the
+    daily digest at 8pm. The workflow now gets several attempts, and the
+    decision to post moves here -- past the target hour, in the configured
+    timezone, and not already sent today.
+    """
+    now = now or local_now(cfg)
+    target = (cfg["slack"][period].get("time") or "09:00").split(":")[0]
+    if now.hour < int(target):
+        return False, f"before {target}:00 {now.tzname() or 'local'}"
+    day = now.date().isoformat()
+    if period == "weekly":
+        want = (cfg["slack"]["weekly"].get("day") or "monday").lower()
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday",
+                "saturday", "sunday"]
+        if want in days and now.weekday() != days.index(want):
+            return False, f"weekly runs on {want}"
+        # One weekly per week, keyed by the Monday it belongs to.
+        day = (now.date() - timedelta(days=now.weekday())).isoformat()
+    if store.digest_sent(conn, period, day):
+        return False, f"already sent for {day}"
+    return True, day
+
+
 def cmd_digest(args, cfg):
     conn = store.connect(config.primary(cfg)["db_path"])
+    stamp = None
+    if getattr(args, "if_due", False):
+        due, stamp = digest_is_due(conn, cfg, args.period)
+        if not due:
+            print(f"Skipping {args.period} digest: {stamp}")
+            return 0
     payload, ids = digest_mod.build(conn, config.primary(cfg), args.period)
     if payload is None:
         print(f"Nothing to report and skip_if_empty is on -- no {args.period} digest sent.")
@@ -298,6 +341,9 @@ def cmd_digest(args, cfg):
         print(f"error: {exc}", file=sys.stderr)
         return 1
     store.mark_notified(conn, ids)
+    if stamp:
+        store.mark_digest_sent(conn, args.period, stamp,
+                               local_now(cfg).isoformat(timespec="seconds"))
     print(f"Sent {args.period} digest covering {len(ids)} signals.")
     conn.close()
     return 0
@@ -438,6 +484,8 @@ def build_parser():
     d.add_argument("period", choices=["daily", "weekly"])
     d.add_argument("--dry-run", action="store_true",
                    help="print the Slack payload instead of sending it")
+    d.add_argument("--if-due", action="store_true", dest="if_due",
+                   help="post only past the scheduled hour, and only once a day")
 
     r = sub.add_parser("run", help="refresh then send a digest (for scheduled jobs)")
     r.add_argument("period", choices=["daily", "weekly"])
