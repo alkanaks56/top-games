@@ -288,7 +288,39 @@ async function handleShare(request, env) {
     { headers: cors(env) });
 }
 
+// GitHub runs scheduled workflows best-effort: one started eleven hours late,
+// and the next day none of four crons fired at all. Cloudflare's cron triggers
+// are punctual, so the schedule lives here and GitHub's own crons stay on as a
+// backup -- `digest --if-due` makes a double trigger a no-op rather than a
+// duplicate message.
+async function dispatchRefresh(env) {
+  if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) {
+    console.log("scheduled: GITHUB_TOKEN/GITHUB_REPO unset, nothing to do");
+    return;
+  }
+  const url = `https://api.github.com/repos/${env.GITHUB_REPO}` +
+              `/actions/workflows/${env.GITHUB_WORKFLOW || "update.yml"}/dispatches`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
+      "Accept": "application/vnd.github+json",
+      "User-Agent": "topgames-scheduler",
+      "Content-Type": "application/json",
+    },
+    // "daily" here is the intent; the job still refuses to post twice a day,
+    // and swaps in the weekly digest on Mondays.
+    body: JSON.stringify({ ref: env.GITHUB_REF || "main",
+                           inputs: { send_digest: "daily" } }),
+  });
+  console.log(`scheduled: workflow dispatch -> ${res.status}`);
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(dispatchRefresh(env));
+  },
+
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
 

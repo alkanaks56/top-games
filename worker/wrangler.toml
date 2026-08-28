@@ -2,7 +2,15 @@ name = "topgames-slash"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 
+# 06:20 UTC == 09:20 Europe/Istanbul (no DST there, so this stays correct).
+[triggers]
+crons = ["20 6 * * *"]
+
 [vars]
+GITHUB_REPO = "alkanaks56/top-games"
+GITHUB_WORKFLOW = "update.yml"
+GITHUB_REF = "main"
+
 # Your GitHub Pages URL, e.g. https://<user>.github.io/<repo>
 PAGES_BASE = "https://alkanaks56.github.io/top-games"
 
