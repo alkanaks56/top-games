@@ -313,7 +313,10 @@ async function dispatchRefresh(env) {
     body: JSON.stringify({ ref: env.GITHUB_REF || "main",
                            inputs: { send_digest: "daily" } }),
   });
-  console.log(`scheduled: workflow dispatch -> ${res.status}`);
+  // GitHub answers a permissions problem with 403 and a body that names it;
+  // the status alone cannot tell a bad token from a missing scope.
+  const detail = res.ok ? "" : ` ${(await res.text()).slice(0, 300)}`;
+  console.log(`scheduled: workflow dispatch -> ${res.status}${detail}`);
 }
 
 export default {
