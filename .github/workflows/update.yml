@@ -2,22 +2,26 @@ name: Update charts and publish
 
 on:
   schedule:
-    # GitHub runs scheduled jobs best-effort, and one of these started eleven
-    # hours late -- posting the daily digest at 8pm. So the morning gets four
-    # attempts on off-the-hour minutes (the top of the hour is the congested
-    # one), and `digest --if-due` decides which of them actually posts: past
-    # 09:00 Europe/Istanbul, once per day. Extra runs only refresh data.
+    # GitHub runs scheduled jobs best-effort, so the morning gets four attempts
+    # on off-the-hour minutes (the top of the hour is the congested one). Each
+    # one refreshes the data and republishes the site; none of them posts to
+    # Slack -- that moved to Halo Hub.
     - cron: "35 5 * * *"      # 08:35 Istanbul -- refresh only
-    - cron: "20 6 * * *"      # 09:20 -- normally the one that posts
-    - cron: "20 8 * * *"      # 11:20 -- catches a delayed 06:20
-    - cron: "20 11 * * *"     # 14:20 -- last resort
+    - cron: "20 6 * * *"      # 09:20
+    - cron: "20 8 * * *"      # 11:20
+    - cron: "20 11 * * *"     # 14:20
   workflow_dispatch:
     inputs:
+      # Kept so the Cloudflare cron's dispatch, which still sends it, is not
+      # refused with 422 -- but ignored: nothing posts to Slack from here any
+      # more. Halo Hub's pipeline posts the same roundup for the same chart
+      # (prototype_store/pipeline/slack.py), and two copies of Monday morning
+      # in one channel read as a bug.
       send_digest:
-        description: "Post a Slack digest for this run"
+        description: "Ignored -- Slack digests moved to Halo Hub"
         type: choice
         options: ["daily", "weekly", "none"]
-        default: "daily"
+        default: "none"
 
 # Never let two runs write the database at once.
 concurrency:
@@ -35,8 +39,6 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
-    env:
-      TOPGAMES_SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,26 +48,6 @@ jobs:
 
       - name: Refresh chart and new releases
         run: python -m topgames refresh
-
-      - name: Decide which digest to send
-        id: which
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "period=${{ inputs.send_digest }}" >> "$GITHUB_OUTPUT"
-          elif [ "$(date -u +%u)" = "1" ]; then
-            echo "period=weekly" >> "$GITHUB_OUTPUT"   # Monday
-          else
-            echo "period=daily" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Post Slack digest
-        if: steps.which.outputs.period != 'none'
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python -m topgames digest ${{ steps.which.outputs.period }}
-          else
-            python -m topgames digest ${{ steps.which.outputs.period }} --if-due
-          fi
 
       - name: Build static site and Slack payloads
         run: python -m topgames export --outdir site --prune
